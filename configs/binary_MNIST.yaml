@@ -10,5 +10,5 @@ model:
 training:
   learning_rate: 0.001
   batch_size: 64
-  num_epochs: 10
-  validation_split: 0.9
+  num_epochs: 20
+  validation_split: 0.5

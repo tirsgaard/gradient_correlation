@@ -38,7 +38,6 @@ def get_binary_MNIST(digits: tuple[int, int], val_split: float) -> tuple[torch.u
     test_data = [(x, 0 if y == digits[0] else 1) for x, y in test_data]
 
     # Split the training set into training and validation
-    val_split = 0.2
     train_size = int((1 - val_split) * len(train_data))
     val_size = len(train_data) - train_size
     train_data, val_data = torch.utils.data.random_split(train_data, [train_size, val_size])

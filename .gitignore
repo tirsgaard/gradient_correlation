@@ -9,3 +9,8 @@ data/MNIST/raw/train-labels-idx1-ubyte.gz
 datasets/__pycache__/download_MNIST.cpython-312.pyc
 figures/binary_MNIST.svg
 models/__pycache__/NN_models.cpython-312.pyc
+figures/binary_MNIST_sample_runs_final.svg
+figures/binary_MNIST_sample_runs.svg
+figures/binary_MNIST_sample_size.svg
+.DS_Store
+__pycache__/training.cpython-312.pyc
