@@ -1,1 +1,5 @@
-# gradient_correlation
+# Gradient Correlation
+
+## Installation
+
+## Running the script
