@@ -1,0 +1,11 @@
+data/MNIST/raw/t10k-images-idx3-ubyte
+data/MNIST/raw/t10k-images-idx3-ubyte.gz
+data/MNIST/raw/t10k-labels-idx1-ubyte
+data/MNIST/raw/t10k-labels-idx1-ubyte.gz
+data/MNIST/raw/train-images-idx3-ubyte
+data/MNIST/raw/train-images-idx3-ubyte.gz
+data/MNIST/raw/train-labels-idx1-ubyte
+data/MNIST/raw/train-labels-idx1-ubyte.gz
+datasets/__pycache__/download_MNIST.cpython-312.pyc
+figures/binary_MNIST.svg
+models/__pycache__/NN_models.cpython-312.pyc
