@@ -23,19 +23,21 @@ train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.trainin
 val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True)
 test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.training.batch_size, shuffle=True)
 
-n_samples = torch.logspace(1, 4, 100, dtype=int).round().int()
+n_samples = torch.logspace(1, 2, 50, dtype=int).round().int()
 indexes = torch.randperm(len(train_data))
-sample_validation_losses = []
-sample_validation_accuracy = []
-for n in tqdm(n_samples, desc='Running sample sizes'):
+
+def run_experiment(n_samples: int, unc_sample: bool=False) -> tuple[list[float], list[float]]:
     torch.manual_seed(1)
     model = SimpleMLP(input_size=784, output_size=1, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
     
-    indexed_data = torch.utils.data.Subset(train_data, indexes[:n])
-    non_indexed_data = torch.utils.data.Subset(train_data, indexes[n:])
+    indexed_data = torch.utils.data.Subset(train_data, indexes[:n_samples])
+    non_indexed_data = torch.utils.data.Subset(train_data, indexes[n_samples:])
     train_loader = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=True)
-    #non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=True)
+    if len(non_indexed_data) > 0:
+        non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=True)
+    else:
+        non_train_loader = []
 
     # Train the model
     validation_losses = []
@@ -46,16 +48,34 @@ for n in tqdm(n_samples, desc='Running sample sizes'):
         val_loss, val_accuracy = validate(model, loss, val_loader)
         validation_losses.append(val_loss)
         validation_accuracies.append(val_accuracy)
-        #print(f'Epoch {epoch}, val loss: {val_loss}, val accuracy: {val_accuracy}')
         
         train_epoch(model, optimizer, loss, train_loader)
+    if unc_sample and len(non_train_loader) > 0:
+        # Compute predictions of the non-indexed data
+        y_hat = torch.cat([model(x) for x, _ in non_train_loader])
+        # Find most uncertain points
+        most_unc_points = torch.abs(y_hat[:, 0]).sort().indices
+        indexes[n_samples:] = indexes[n_samples:][most_unc_points]
         
-    # Validate model
     val_loss, val_accuracy = validate(model, loss, val_loader)
     validation_losses.append(val_loss)
     validation_accuracies.append(val_accuracy)
+        
+    return validation_losses, validation_accuracies
+
+sample_validation_losses = []
+sample_validation_accuracy = []
+for n in tqdm(n_samples, desc='Running sample sizes for PL'):
+    validation_losses, validation_accuracies = run_experiment(n, unc_sample=False)
     sample_validation_losses.append(validation_losses)
     sample_validation_accuracy.append(validation_accuracies)
+    
+sample_validation_unc_losses = []
+sample_validation_unc_accuracy = []
+for n in tqdm(n_samples, desc='Running sample sizes for Uncertainty Sampling'):
+    validation_losses, validation_accuracies = run_experiment(n, unc_sample=True)
+    sample_validation_unc_losses.append(validation_losses)
+    sample_validation_unc_accuracy.append(validation_accuracies)
     
 # Plot the validation loss and accuracy as a function of the number of samples
 fig, axs = plt.subplots(2)
@@ -75,24 +95,37 @@ plt.savefig("figures/binary_MNIST_sample_runs.svg")
 plt.show()
 
 fig, axs = plt.subplots(2)
+# Passive learning
 final_losses = [sample_validation_losses[i][-1] for i in range(len(n_samples))]
 final_accuracies = [sample_validation_accuracy[i][-1] for i in range(len(n_samples))]
 min_losses = [min(sample_validation_losses[i]) for i in range(len(n_samples))]
 max_acc = [max(sample_validation_accuracy[i]) for i in range(len(n_samples))]
 
-axs[0].plot(n_samples, final_losses, label='Final Loss')
-axs[0].plot(n_samples, min_losses, label='Min Loss')
+# Uncertainty sampling
+final_unc_losses = [sample_validation_unc_losses[i][-1] for i in range(len(n_samples))]
+final_unc_accuracies = [sample_validation_unc_accuracy[i][-1] for i in range(len(n_samples))]
+min_unc_losses = [min(sample_validation_unc_losses[i]) for i in range(len(n_samples))]
+max_unc_acc = [max(sample_validation_unc_accuracy[i]) for i in range(len(n_samples))]
+
+axs[0].plot(n_samples, final_losses, label='Final Loss PL', color='red', linestyle='--')
+axs[0].plot(n_samples, min_losses, label='Min Loss PL', color='red')
+axs[0].plot(n_samples, final_unc_losses, label='Final Loss unc', color='green', linestyle='--')
+axs[0].plot(n_samples, min_unc_losses, label='Min Loss unc', color='green')
 axs[0].set_title('Final Loss')
 axs[0].set_xlabel('Number of Samples')
 axs[0].set_ylabel('Loss')
 axs[0].set_xscale('log')
+axs[0].legend()
 
-axs[1].plot(n_samples, final_accuracies, label='Final Accuracy')
-axs[1].plot(n_samples, max_acc, label='Max Accuracy')
+axs[1].plot(n_samples, final_accuracies, label='Final Accuracy PL', color='red', linestyle='--')
+axs[1].plot(n_samples, max_acc, label='Max Accuracy PL', color='red')
+axs[1].plot(n_samples, final_unc_accuracies, label='Final Accuracy unc', color='green', linestyle='--')
+axs[1].plot(n_samples, max_unc_acc, label='Max Accuracy unc', color='green')
 axs[1].set_title('Final Accuracy')
 axs[1].set_xlabel('Number of Samples')
 axs[1].set_ylabel('Accuracy')
 axs[1].set_xscale('log')
+axs[1].legend()
 plt.savefig("figures/binary_MNIST_sample_runs_final.svg")
 plt.show()
 
