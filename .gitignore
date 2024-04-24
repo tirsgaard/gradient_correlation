@@ -21,3 +21,8 @@ data/cifar-100-python/meta
 data/cifar-100-python/test
 data/cifar-100-python/train
 datasets/__pycache__/download_CIFAR100.cpython-312.pyc
+CorrGrad.egg-info/dependency_links.txt
+CorrGrad.egg-info/PKG-INFO
+CorrGrad.egg-info/requires.txt
+CorrGrad.egg-info/SOURCES.txt
+CorrGrad.egg-info/top_level.txt

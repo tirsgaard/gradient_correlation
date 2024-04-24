@@ -1,34 +1,34 @@
 import torch
 import torchvision
-from models.NN_models import SimpleMLP
+from src.models.NN_models import SimpleMLP, CNN
 import yaml
-from datasets.download_MNIST import get_binary_MNIST
-from training import train_epoch, validate, test
+from datasets.download_CIFAR100 import get_binary_CIFAR100
+from src.training import train_epoch, validate, test
 from tqdm import tqdm
 from easydict import EasyDict as edict
 import matplotlib.pyplot as plt
 
-config = edict(yaml.safe_load(open('configs/binary_MNIST.yaml', 'r')))
+config = edict(yaml.safe_load(open('configs/binary_CIFAR100.yaml', 'r')))
 # Define the model (binary classification)
 torch.manual_seed(1)
-model = SimpleMLP(input_size=784, output_size=1, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers)
+model = CNN(input_shape=(32, 32, 3), output_size=1, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers)
 optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
 loss = torch.nn.BCEWithLogitsLoss()
 
 # Load the data
 digits = (1, 7)
-train_data, val_data, test_data = get_binary_MNIST(digits, config.training.validation_split)
+train_data, val_data, test_data = get_binary_CIFAR100(digits, config.training.validation_split)
 # Shuffle the train data
 train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True)
 val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True)
 test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.training.batch_size, shuffle=True)
 
-n_samples = torch.logspace(1, 2, 30, dtype=int).round().int()
+n_samples = torch.logspace(1, torch.log10(torch.tensor(2*250)), 10, dtype=int).round().int()
 indexes = torch.randperm(len(train_data))
 
 def run_experiment(n_samples: int, unc_sample: bool=False) -> tuple[list[float], list[float]]:
     torch.manual_seed(1)
-    model = SimpleMLP(input_size=784, output_size=1, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers)
+    model = SimpleMLP(input_size=32*32*3, output_size=1, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
     
     indexed_data = torch.utils.data.Subset(train_data, indexes[:n_samples])
@@ -62,14 +62,6 @@ def run_experiment(n_samples: int, unc_sample: bool=False) -> tuple[list[float],
     validation_accuracies.append(val_accuracy)
         
     return validation_losses, validation_accuracies
-
-
-sample_validation_corr_losses = []
-sample_validation_corr_accuracy = []
-for n in tqdm(n_samples, desc='Running sample sizes for Correlation Sampling'):
-    validation_losses, validation_accuracies = run_experiment(n, unc_sample=True)
-    sample_validation_corr_losses.append(validation_losses)
-    sample_validation_corr_accuracy.append(validation_accuracies)
 
 sample_validation_losses = []
 sample_validation_accuracy = []

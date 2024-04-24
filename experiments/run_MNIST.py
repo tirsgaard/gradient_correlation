@@ -1,11 +1,11 @@
 from typing import Iterable
 import torch
 import torchvision
-from models.NN_models import SimpleMLP
+from src.models.NN_models import SimpleMLP
 import yaml
 from datasets.download_MNIST import get_MNIST
-from training import train_epoch, validate, test
-from correlation_gradient import rank_sample_information
+from src.training import train_epoch, validate, test
+from src.correlation_gradient import rank_sample_information
 from tqdm import tqdm
 from easydict import EasyDict as edict
 import matplotlib.pyplot as plt
