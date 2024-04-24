@@ -68,3 +68,28 @@ class SimpleMLP(nn.Module):
             x = self.dropout(x)
         x = self.layers[-1](x)
         return x
+    
+class CNN(nn.Module):
+    """ A simple convolutional neural network for CIFAR100 classification """
+    def __init__(self, input_shape: tuple[int, int, int], output_size: int, hidden_size: int, num_layers: int = 4):
+        super(CNN, self).__init__()
+        self.input_shape = input_shape
+        self.output_size = output_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Conv2d(input_shape[0], hidden_size, kernel_size=3, padding=1))
+        self.layers.append(nn.ReLU())
+        self.layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+        for _ in range(num_layers - 2):
+            self.layers.append(nn.Conv2d(hidden_size, hidden_size, kernel_size=3, padding=1))
+            self.layers.append(nn.ReLU())
+            self.layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+        self.layers.append(nn.Flatten())
+        self.layers.append(nn.Linear(hidden_size * (input_shape[1] // 2 ** (num_layers - 1)) * (input_shape[2] // 2 ** (num_layers - 1)), output_size))
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for layer in self.layers:
+            x = layer(x)
+        return x

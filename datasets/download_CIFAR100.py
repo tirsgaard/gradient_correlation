@@ -2,20 +2,18 @@ import torch
 import torchvision
 from torchvision import transforms
 
-
-
-def get_MNIST_train() -> torchvision.datasets.MNIST:
+def get_CIFAR100_train() -> torchvision.datasets.CIFAR100:
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-    trainset = torchvision.datasets.MNIST(root='./data/', train=True, download=True, transform=transform)
+    trainset = torchvision.datasets.CIFAR100(root='./data/', train=True, download=True, transform=transform)
     return trainset
 
-def get_MNIST_test() -> torchvision.datasets.MNIST:
+def get_CIFAR100_test() -> torchvision.datasets.CIFAR100:
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-    testset = torchvision.datasets.MNIST(root='./data/', train=False, download=True, transform=transform)
+    testset = torchvision.datasets.CIFAR100(root='./data/', train=False, download=True, transform=transform)
     return testset
 
-def get_binary_MNIST(digits: tuple[int, int], val_split: float) -> tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
-    """ Function for loading the binary MNIST dataset with the specified digits and validation split
+def get_binary_CIFAR100(digits: tuple[int, int], val_split: float) -> tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
+    """ Function for loading the binary CIFAR100 dataset with the specified digits and validation split
     Args:
         digits: The digits to classify
         val_split: The proportion of the training set to use for validation
@@ -26,11 +24,10 @@ def get_binary_MNIST(digits: tuple[int, int], val_split: float) -> tuple[torch.u
             test_data: The test set
     """
     # Load the data
-    train_data = get_MNIST_train()
-    test_data = get_MNIST_test()
+    train_data = get_CIFAR100_train()
+    test_data = get_CIFAR100_test()
 
     # Only keep the 0s and 1s for binary classification
-    digits = (1,7)
     train_data = list(filter(lambda i: i[1] in digits, train_data))
     test_data = list(filter(lambda i: i[1] in digits, test_data))
     # Set 0 to be the negative class
@@ -44,11 +41,11 @@ def get_binary_MNIST(digits: tuple[int, int], val_split: float) -> tuple[torch.u
     
     return train_data, val_data, test_data
 
-def get_MNIST(val_split: float, one_hot: bool=True) -> tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
-    """ Function for loading the MNIST dataset with the specified validation split. 
+
+def get_CIFAR100(val_split: float) -> tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
+    """ Function for loading the CIFAR100 dataset with the specified validation split
     Args:
         val_split: The proportion of the training set to use for validation
-        one_hot: Whether to return the classes as one-hot vectors
         
         Returns:
             train_data: The training set
@@ -56,12 +53,8 @@ def get_MNIST(val_split: float, one_hot: bool=True) -> tuple[torch.utils.data.Da
             test_data: The test set
     """
     # Load the data
-    train_data = get_MNIST_train()
-    test_data = get_MNIST_test()
-    if one_hot:
-        # Convert the classes to one-hot vectors
-        train_data = [(x, torch.nn.functional.one_hot(torch.tensor(y), num_classes=10)) for x, y in train_data]
-        test_data = [(x, torch.nn.functional.one_hot(torch.tensor(y), num_classes=10)) for x, y in test_data]
+    train_data = get_CIFAR100_train()
+    test_data = get_CIFAR100_test()
 
     # Split the training set into training and validation
     train_size = int((1 - val_split) * len(train_data))

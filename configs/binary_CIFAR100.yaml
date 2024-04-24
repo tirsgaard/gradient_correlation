@@ -1,0 +1,14 @@
+data:
+  dataset: binary_CIFAR100
+  data_dir: data
+  num_classes: 2
+
+model:
+  hidden_size: 256
+  num_layers: 4
+
+training:
+  learning_rate: 0.001
+  batch_size: 64
+  num_epochs: 20
+  validation_split: 0.5

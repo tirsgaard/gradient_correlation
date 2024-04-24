@@ -14,3 +14,10 @@ figures/binary_MNIST_sample_runs.svg
 figures/binary_MNIST_sample_size.svg
 .DS_Store
 __pycache__/training.cpython-312.pyc
+__pycache__/correlation_gradient.cpython-312.pyc
+data/cifar-100-python.tar.gz
+data/cifar-100-python/file.txt~
+data/cifar-100-python/meta
+data/cifar-100-python/test
+data/cifar-100-python/train
+datasets/__pycache__/download_CIFAR100.cpython-312.pyc
