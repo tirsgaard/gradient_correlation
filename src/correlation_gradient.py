@@ -14,7 +14,7 @@ def average_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
         total_loss += loss(y_pred.float(), torch.tensor([i], dtype=torch.long).repeat(y_pred.shape[0])) * y_pred.softmax(-1)[:, i]
     return total_loss
 
-def get_gradient(model: torch.nn.Module, data: Iterable[torch.Tensor], loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, flatten: bool = False) -> torch.Tensor:
+def get_gradient(model: torch.nn.Module, data: Iterable[torch.Tensor], loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, flatten: bool = False, use_label: bool = False) -> torch.Tensor:
     """
     Get the gradient of each element of the batch in x of the model with respect to the loss function
     
@@ -31,13 +31,18 @@ def get_gradient(model: torch.nn.Module, data: Iterable[torch.Tensor], loss_fn: 
     """
     batch_gradients = []
     device = next(model.parameters()).device
-    for x, _ in data:
+    for x, y_target in data:
         x = x.to(device)
         opt.zero_grad()
         y_pred = model(x.unsqueeze(0))
-        y_target = y_pred.detach().argmax(1)
+        
+        if use_label:
+            y_target = y_target.to(device).float()
+        else:
+            y_target = y_pred.detach().argmax(1)
+            y_target = torch.zeros_like(y_pred).scatter(1, y_target.unsqueeze(1), 1)
+       
         # get one-hot encoding of y_target
-        y_target = torch.zeros_like(y_pred).scatter(1, y_target.unsqueeze(1), 1)
         loss = loss_fn(y_pred, y_target)
         loss.backward()
         grads = []
@@ -49,6 +54,41 @@ def get_gradient(model: torch.nn.Module, data: Iterable[torch.Tensor], loss_fn: 
     grads = torch.stack(batch_gradients)
     return grads
 
+def get_gradient_batch(model: torch.nn.Module, data: Iterable[torch.Tensor], loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True) -> torch.Tensor:
+    """
+    Get the gradient of the batch in x of the model with respect to the loss function
+    
+    Args:
+        model: the model to use
+        data: the input data [N_saples][...]
+        loss_fn: the loss function to use
+        opt: the optimizer to use
+        positive: whether to perturb the loss function positively or negatively
+        
+    Returns:
+        grads: the gradients of the model with respect to the loss function
+    """
+    # Get the dimension of the parameters of the model
+    n_params = sum(param.numel() for param in model.parameters())
+    grads = torch.zeros(n_params)
+    
+    N_samples = 0
+    opt.zero_grad()
+    for x, y in data:
+        x = x.to(next(model.parameters()).device)
+        N_samples += x.shape[0]
+        y_pred = model(x)
+        loss = loss_fn(y_pred, y.float())
+        loss.backward()
+        grads_batch = []
+        for param in model.parameters():
+            grads_batch.append(param.grad.detach())
+        grads_batch = torch.cat([grad.view(-1) for grad in grads_batch])
+        grads_batch /= torch.norm(grads_batch)
+        grads += grads_batch
+    grads /= N_samples
+    return grads
+
 def construct_correlation_matrix(grads: torch.Tensor) -> torch.Tensor:
     """ Construct the correlation matrix from the gradients
     Args:
@@ -58,9 +98,82 @@ def construct_correlation_matrix(grads: torch.Tensor) -> torch.Tensor:
         correlation_matrix: the correlation matrix [n_params, n_params]
     """
     normalised_gradients = grads - grads.mean(axis=0)[None, ...]
-    normalised_gradients = normalised_gradients/torch.norm(normalised_gradients, dim=-1)[..., None]
-    correlation_matrix = torch.matmul(normalised_gradients, normalised_gradients.T)
+    normalised_gradients = normalised_gradients / (normalised_gradients.std(0)+10**-6)
+    normalised_gradients[normalised_gradients.isnan()] = 0
+    normalised_gradients = normalised_gradients/(torch.norm(normalised_gradients, dim=-1)[..., None]/(normalised_gradients.shape[-1]**0.5))
+    correlation_matrix = torch.matmul(normalised_gradients, normalised_gradients.T)/normalised_gradients.shape[-1]
     return correlation_matrix
+
+
+def maximum_determinant_ranking(full_matrix: torch.Tensor) -> torch.Tensor:
+    """ Iteratively tries to find sequence that maximises the determinant of the subeset of the matrix.
+    
+    Args:
+        full_matrix: the full matrix to use [n_dim, n_dim]
+        
+    Returns:
+        ranked_samples: the ranked samples
+    """
+    indexes = torch.zeros(full_matrix.shape[0], dtype=int)
+    added_indexes = torch.zeros(full_matrix.shape[0], dtype=bool)
+    # Select point most informative (highest correlation)
+    first_index = torch.argmax((full_matrix**2).sum(axis=0))
+    indexes[0] = first_index
+    added_indexes[first_index] = True
+    
+    stop_iteration = 300
+    from tqdm import tqdm
+    for i in tqdm(range(1, stop_iteration)):
+        max_det = 0
+        A = full_matrix[indexes[:i]][:, indexes[:i]]
+        not_added_indexes = torch.arange(full_matrix.shape[0])[~added_indexes]
+        B_all = full_matrix[indexes[:i]][:, not_added_indexes].T
+        D = full_matrix[not_added_indexes, not_added_indexes]
+        mat = A - B_all[..., None] @ B_all[..., None, :]/D[..., None, None]
+        mat = (mat + torch.transpose(mat, 1, 2))/2  # Ensure symmetry
+        all_mat = D*torch.linalg.det(mat)
+        max_det, best_index = torch.max(all_mat, 0)
+        
+        # Vectorize the computation below
+        """
+        for j in range(full_matrix.shape[0]):
+            if added_indexes[j]:
+                continue
+            new_indexes = torch.cat([indexes[:i], torch.tensor([j])])
+            new_matrix = full_matrix[new_indexes][:, new_indexes]
+            A = new_matrix[:-1, :-1]
+            B = new_matrix[:-1, -1]
+            D = new_matrix[-1, -1]
+            det = D*torch.linalg.det(A - B[:, None]*B[None, :]/D)
+            if det > max_det:
+                max_det = det
+                best_index = j
+        """
+        # Convert best_index to the original index
+        best_index = not_added_indexes[best_index]
+        indexes[i] = best_index
+        assert not added_indexes[best_index]
+        added_indexes[best_index] = True
+    # Add remaining indexes
+    indexes[stop_iteration:] = torch.arange(full_matrix.shape[0])[~added_indexes]
+    return indexes
+    
+    
+
+def construct_covariance_matrix(grads: torch.Tensor) -> torch.Tensor:
+    """ Construct the covariance matrix from the gradients
+    Args:
+        grads: the gradients to use [batch_size, n_params]
+        
+    Returns:
+        covariance_matrix: the covariance matrix [n_params, n_params]
+    """
+    normalised_gradients = grads - grads.mean(axis=0)[None, ...]
+    length = torch.norm(normalised_gradients, dim=-1)
+    normalised_gradients = normalised_gradients/length[..., None]
+    correlation_matrix = torch.matmul(normalised_gradients, normalised_gradients.T)
+    covariance_matrix = correlation_matrix*torch.outer(length, length)
+    return covariance_matrix
 
 def get_most_informative_index(correlation_matrix: torch.Tensor) -> int:
     """ Get the most informative index from the correlation matrix
@@ -173,6 +286,31 @@ def rank_correlation_information(correlation_matrix: torch.Tensor) -> torch.Tens
             break
     return ranked_samples
 
+def rank_correlation_uniqueness(x_train: torch.Tensor, x_unlabel: torch.Tensor, model: torch.nn.Module, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True) -> torch.Tensor:
+    """ Rank the samples by uniqueness (decorrelation) of the gradients from trianing data
+    Args:
+        x_train: the training data [N_train][...]
+        x_unlabel: the unlabelled data [N_unlabel][...]
+        model: the model to use
+        loss_fn: the loss function to use
+        opt: the optimizer to use
+        positive: whether to perturb the loss function positively or negatively
+        
+    Returns:
+        ranked_samples: the ranked samples
+    """
+    train_gradient = get_gradient(model, x_train, loss_fn, opt, positive, flatten=True)
+    train_gradient /= torch.norm(train_gradient, dim=-1)[..., None]
+    train_gradient = train_gradient.sum(0)
+    unlabel_gradients = get_gradient(model, x_unlabel, loss_fn, opt, positive, flatten=True)
+    combined_gradients = torch.cat([train_gradient[None, ...], unlabel_gradients + train_gradient[None, ...]])
+    correlation_matrix = construct_correlation_matrix(combined_gradients)
+    return correlation_matrix[0].sort().indices
+    
+    
+        
+
+
 def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, pre_condition_index: Optional[torch.Tensor]=None) -> torch.Tensor:
     """ Rank the samples by information
     Args:
@@ -187,12 +325,14 @@ def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, l
         ranked_samples: the ranked samples
     """
     grads = get_gradient(model, x, loss_fn, opt, positive, flatten= True)
-    correlation_matrix = construct_correlation_matrix(grads)
+    correlation_matrix = construct_correlation_matrix(grads)    
+    #if len(pre_condition_index) > 0:
+    #    correlation_matrix = condition_on_observations(correlation_matrix, pre_condition_index, cor_cutoff=0.8)
     
     # Run PCA on correlation matrix and project x onto the first two principal components
     import matplotlib.pyplot as plt
     from sklearn.decomposition import PCA
-    pca = PCA(n_components=2)
+    pca = PCA(n_components=1)
     pca.fit(correlation_matrix)
     x_pca = pca.transform(correlation_matrix)
     

@@ -1,11 +1,12 @@
 from typing import Iterable
 import torch
 import torchvision
+import scipy
 from src.models.NN_models import SimpleMLP
 import yaml
 from datasets.download_MNIST import get_MNIST
 from src.training import train_epoch, validate, test
-from src.correlation_gradient import rank_sample_information
+from src.correlation_gradient import rank_sample_information, rank_correlation_uniqueness
 from tqdm import tqdm
 from easydict import EasyDict as edict
 import matplotlib.pyplot as plt
@@ -23,8 +24,8 @@ loss = torch.nn.CrossEntropyLoss()
 train_data, val_data, test_data = get_MNIST(config.training.validation_split)
 # Shuffle the train data
 train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
+val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=True)
+test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=True)
 
 n_samples = torch.logspace(1, 2, 2, dtype=int).round().int()
 indexes = torch.randperm(len(train_data))
@@ -67,7 +68,9 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     non_indexed_data = torch.utils.data.Subset(train_data, unsampled_indexes[:max_add_subset])
     train_loader = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
     non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
-    non_train_loader_single_batch = torch.utils.data.DataLoader(indexed_data + non_indexed_data, batch_size=1, shuffle=False, pin_memory=True)
+    train_loader_single_batch = torch.utils.data.DataLoader(indexed_data, batch_size=1, shuffle=False, pin_memory=True)
+    non_train_loader_single_batch = torch.utils.data.DataLoader(non_indexed_data, batch_size=1, shuffle=False, pin_memory=True)
+    comb_train_loader_single_batch = torch.utils.data.DataLoader(indexed_data + non_indexed_data, batch_size=1, shuffle=False, pin_memory=True)
 
     # Train the model
     validation_losses = []
@@ -89,22 +92,36 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     uncertainty_sampling_ranking = unsampled_indexes[most_unc_points.cpu()]
         
     # Gradient correlation sampling
-    most_decor_points = rank_sample_information(non_train_loader_single_batch, model, loss, optimizer, pre_condition_index=torch.tensor(range(len(indexed_data)), dtype=int))
+    most_decor_points = rank_sample_information(non_train_loader_single_batch, model, loss, optimizer, pre_condition_index=torch.tensor([], dtype=int))
     gradient_correlation_ranking = unsampled_indexes[most_decor_points]
+    
+    # Gradient correlation sampling with conditioning on training data
+    most_decor_points = rank_sample_information(comb_train_loader_single_batch, model, loss, optimizer, pre_condition_index=torch.tensor(range(len(indexed_data)), dtype=int))
+    gradient_correlation_cond_ranking = unsampled_indexes[most_decor_points]
+    
+    # Gradient correlation sampling with correlation to training data gradient
+    most_decor_points = rank_correlation_uniqueness(train_loader_single_batch, non_train_loader_single_batch, model, loss, optimizer)
+    gradient_correlation_unique = unsampled_indexes[most_decor_points]
     
     random_sampling_results = []
     uncertainty_sampling_results = []
     gradient_correlation_results = []
-    for n_samples in tqdm(n_additional_samples, desc='Running sample sizes'):
+    gradient_correlation_cond_results = []
+    gradient_correlation_unique_results = []
+    for n_samples in n_additional_samples:
         # Random sampling
         random_sampling_data = indexed_data + torch.utils.data.Subset(train_data, passive_sampling_ranking[:n_samples])
         train_data_loader = torch.utils.data.DataLoader(random_sampling_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True, )
         current_model = deepcopy(model)
         current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
         random_sampling_results_epoch = []
+        validation_res = []
         for epoch in range(config.training.num_epochs):
             train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
-        random_sampling_results_epoch.append(validate(current_model, loss, val_loader, device))
+            validation_res.append(validate(current_model, loss, val_loader, device))
+        # add the validation score with highest accuracy
+        best_epoch = max(validation_res, key=lambda x: x[1])
+        random_sampling_results_epoch.append(best_epoch)
         random_sampling_results.append(list(zip(*random_sampling_results_epoch)))
         
         # Uncertainty sampling
@@ -113,9 +130,12 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         current_model = deepcopy(model)
         current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
         uncertainty_sampling_results_epoch = []
+        validation_res = []
         for epoch in range(config.training.num_epochs):
             train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
-        uncertainty_sampling_results_epoch.append(validate(current_model, loss, val_loader, device))
+            validation_res.append(validate(current_model, loss, val_loader, device))
+        best_epoch = max(validation_res, key=lambda x: x[1])
+        uncertainty_sampling_results_epoch.append(best_epoch)
         uncertainty_sampling_results.append(list(zip(*uncertainty_sampling_results_epoch)))
             
         # Gradient correlation sampling
@@ -124,12 +144,43 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         current_model = deepcopy(model)
         current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
         gradient_correlation_results_epoch = []
+        validation_res = []
         for epoch in range(config.training.num_epochs):
             train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
-        gradient_correlation_results_epoch.append(validate(current_model, loss, val_loader, device))
+            validation_res.append(validate(current_model, loss, val_loader, device))
+        best_epoch = max(validation_res, key=lambda x: x[1])
+        gradient_correlation_results_epoch.append(best_epoch)
         gradient_correlation_results.append(list(zip(*gradient_correlation_results_epoch)))
         
-    return random_sampling_results, uncertainty_sampling_results, gradient_correlation_results
+        # Gradient correlation sampling with conditioning on training data
+        gradient_correlation_data = indexed_data + torch.utils.data.Subset(train_data, gradient_correlation_cond_ranking[:n_samples])
+        train_data_loader = torch.utils.data.DataLoader(gradient_correlation_data, batch_size=config.training.batch_size, shuffle=True, )
+        current_model = deepcopy(model)
+        current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
+        gradient_correlation_cond_results_epoch = []
+        validation_res = []
+        for epoch in range(config.training.num_epochs):
+            train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
+            validation_res.append(validate(current_model, loss, val_loader, device))
+        best_epoch = max(validation_res, key=lambda x: x[1])
+        gradient_correlation_cond_results_epoch.append(best_epoch)
+        gradient_correlation_cond_results.append(list(zip(*gradient_correlation_cond_results_epoch)))
+        
+        # Gradient correlation sampling with correlation to training data gradient
+        gradient_correlation_data = indexed_data + torch.utils.data.Subset(train_data, gradient_correlation_unique[:n_samples])
+        train_data_loader = torch.utils.data.DataLoader(gradient_correlation_data, batch_size=config.training.batch_size, shuffle=True, )
+        current_model = deepcopy(model)
+        current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
+        gradient_correlation_unique_results_epoch = []
+        validation_res = []
+        for epoch in range(config.training.num_epochs):
+            train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
+            validation_res.append(validate(current_model, loss, val_loader, device))
+        best_epoch = max(validation_res, key=lambda x: x[1])
+        gradient_correlation_unique_results_epoch.append(best_epoch)
+        gradient_correlation_unique_results.append(list(zip(*gradient_correlation_unique_results_epoch)))
+        
+    return random_sampling_results, uncertainty_sampling_results, gradient_correlation_results, gradient_correlation_cond_results, gradient_correlation_unique_results
 
 def run_sequence_experiment(indexes: torch.Tensor, n_samples: int, unc_sample: bool=False, corr_sample: bool=False, N_max: int = 100) -> tuple[list[float], list[float]]:
     """ Run an active learning experiment. 
@@ -210,17 +261,21 @@ for n in tqdm(n_samples, desc='Running sample sizes for Uncertainty Sampling'):
 n_start_data = 100
 n_rep = 10
 results = []
-for i in range(n_rep):
+for i in tqdm(range(n_rep), desc='Running Repetitions'):
     indexes = torch.randperm(len(train_data))
     results.append(run_single_experiment(indexes[:n_start_data], indexes[n_start_data:], n_samples))
     
-result_array = torch.tensor(results).mean(0)
-sample_validation_losses = result_array[0, :, 0, :]
-sample_validation_accuracy = result_array[0, :, 1, :]
-sample_validation_unc_losses = result_array[1, :, 0, :]
-sample_validation_unc_accuracy = result_array[1, :, 1, :]
-sample_validation_corr_losses = result_array[2, :, 0, :]
-sample_validation_corr_accuracy = result_array[2, :, 1, :]
+result_array = torch.tensor(results)
+sample_validation_losses = result_array[:, 0, :, 0, :]
+sample_validation_accuracy = result_array[:, 0, :, 1, :]
+sample_validation_unc_losses = result_array[:, 1, :, 0, :]
+sample_validation_unc_accuracy = result_array[:, 1, :, 1, :]
+sample_validation_corr_losses = result_array[:, 2, :, 0, :]
+sample_validation_corr_accuracy = result_array[:, 2, :, 1, :]
+sample_validation_corr_cond_losses = result_array[:, 3, :, 0, :]
+sample_validation_corr_cond_accuracy = result_array[:, 3, :, 1, :]
+sample_validation_corr_unique_losses = result_array[:, 4, :, 0, :]
+sample_validation_corr_unique_accuracy = result_array[:, 4, :, 1, :]
 
 
 # Plot the validation loss and accuracy as a function of the number of samples
@@ -240,43 +295,34 @@ axs[1].legend()
 plt.savefig("figures/binary_MNIST_sample_runs.svg")
 plt.show()
 
+
+def generate_uncertainty_curve(ax, data_sample, label, color, significance_level=0.05):
+    mean = data_sample.mean(0)
+    std = data_sample.std(0)
+    n_root = torch.sqrt(torch.tensor([data_sample.shape[0]]))
+    q_val = scipy.stats.norm().ppf(1 - significance_level / 2)
+    lines = q_val*std/n_root
+    ax.plot(n_samples, mean, label=label, color=color)
+    ax.fill_between(n_samples, mean - lines, mean + lines, color=color, alpha=0.2)
+
 fig, axs = plt.subplots(2)
-# Passive learning
-final_losses = [sample_validation_losses[i][-1] for i in range(len(n_samples))]
-final_accuracies = [sample_validation_accuracy[i][-1] for i in range(len(n_samples))]
-min_losses = [min(sample_validation_losses[i]) for i in range(len(n_samples))]
-max_acc = [max(sample_validation_accuracy[i]) for i in range(len(n_samples))]
-
-# Uncertainty sampling
-final_unc_losses = [sample_validation_unc_losses[i][-1] for i in range(len(n_samples))]
-final_unc_accuracies = [sample_validation_unc_accuracy[i][-1] for i in range(len(n_samples))]
-min_unc_losses = [min(sample_validation_unc_losses[i]) for i in range(len(n_samples))]
-max_unc_acc = [max(sample_validation_unc_accuracy[i]) for i in range(len(n_samples))]
-
-# Correlation Sampling
-final_corr_losses = [sample_validation_corr_losses[i][-1] for i in range(len(n_samples))]
-final_corr_accuracies = [sample_validation_corr_accuracy[i][-1] for i in range(len(n_samples))]
-min_corr_losses = [min(sample_validation_corr_losses[i]) for i in range(len(n_samples))]
-max_corr_acc = [max(sample_validation_corr_accuracy[i]) for i in range(len(n_samples))]
-
-axs[0].plot(n_samples, final_losses, label='Final Loss PL', color='red', linestyle='--')
-axs[0].plot(n_samples, min_losses, label='Min Loss PL', color='red')
-axs[0].plot(n_samples, final_unc_losses, label='Final Loss unc', color='green', linestyle='--')
-axs[0].plot(n_samples, min_unc_losses, label='Min Loss unc', color='green')
-axs[0].plot(n_samples, final_corr_losses, label='Final Loss corr', color='blue', linestyle='--')
-axs[0].plot(n_samples, min_corr_losses, label='Min Loss corr', color='blue')
+generate_uncertainty_curve(axs[0], sample_validation_losses[..., -1], 'Final Loss PL', 'red')
+generate_uncertainty_curve(axs[0], sample_validation_unc_losses[..., -1], 'Final Loss unc', 'green')
+generate_uncertainty_curve(axs[0], sample_validation_corr_losses[..., -1], 'Final Loss corr', 'blue')
+generate_uncertainty_curve(axs[0], sample_validation_corr_cond_losses[..., -1], 'Final Loss corr cond', 'purple')
+generate_uncertainty_curve(axs[0], sample_validation_corr_unique_losses[..., -1], 'Final Loss corr unique', 'orange')
 axs[0].set_title('Final Loss')
 axs[0].set_xlabel('Number of Samples')
 axs[0].set_ylabel('Loss')
 axs[0].set_xscale('log')
 axs[0].legend()
 
-axs[1].plot(n_samples, final_accuracies, label='Final Accuracy PL', color='red', linestyle='--')
-axs[1].plot(n_samples, max_acc, label='Max Accuracy PL', color='red')
-axs[1].plot(n_samples, final_unc_accuracies, label='Final Accuracy unc', color='green', linestyle='--')
-axs[1].plot(n_samples, max_unc_acc, label='Max Accuracy unc', color='green')
-axs[1].plot(n_samples, final_corr_accuracies, label='Final Accuracy corr', color='blue', linestyle='--')
-axs[1].plot(n_samples, max_corr_acc, label='Max Accuracy corr', color='blue')
+generate_uncertainty_curve(axs[1], sample_validation_accuracy[..., -1], 'Final Accuracy PL', 'red')
+generate_uncertainty_curve(axs[1], sample_validation_unc_accuracy[..., -1], 'Final Accuracy unc', 'green')
+generate_uncertainty_curve(axs[1], sample_validation_corr_accuracy[..., -1], 'Final Accuracy corr', 'blue')
+generate_uncertainty_curve(axs[1], sample_validation_corr_cond_accuracy[..., -1], 'Final Accuracy corr cond', 'purple')
+generate_uncertainty_curve(axs[1], sample_validation_corr_unique_accuracy[..., -1], 'Final Accuracy corr unique', 'orange')
+
 axs[1].set_title('Final Accuracy')
 axs[1].set_xlabel('Number of Samples')
 axs[1].set_ylabel('Accuracy')
