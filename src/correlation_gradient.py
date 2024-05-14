@@ -229,10 +229,10 @@ def condition_on_observation(correlation_matrix: torch.Tensor, index: int) -> to
     denom = torch.sqrt(((1-corr_squared[:, index])[:, None]*(1-corr_squared[index, :])[None, :]).clip(10**-6, float('inf')))
     new_correlation_matrix = (correlation_matrix - correlation_matrix[:, index][:, None]*correlation_matrix[index, :][None, :])/denom
     # Remove index from correlation matrix
-    new_correlation_matrix = new_correlation_matrix[torch.arange(n_dim) != index][:, torch.arange(n_dim) != index]
+    new_correlation_matrix = new_correlation_matrix[range(n_dim) != index][:, torch.arange(n_dim) != index]
     
     if torch.linalg.cond(new_correlation_matrix) > 10**4:
-        new_correlation_matrix = new_correlation_matrix + torch.eye(new_correlation_matrix.shape[0])
+        new_correlation_matrix = new_correlation_matrix + torch.eye(new_correlation_matrix.shape[0], device=new_correlation_matrix.device)
         new_correlation_matrix = covariance2correlation(new_correlation_matrix)
     new_correlation_matrix = new_correlation_matrix.clip(-1, 1)
     return new_correlation_matrix
@@ -263,7 +263,7 @@ def condition_on_observations(correlation_matrix: torch.Tensor, indexes: torch.T
     sigma_cond = (sigma_cond + sigma_cond.T)/2  # Ensure symmetry
     new_correlation_matrix = sigma11 - sigma_cond
     if torch.linalg.cond(new_correlation_matrix) > 10**4:
-        new_correlation_matrix = new_correlation_matrix + torch.eye(new_correlation_matrix.shape[0])
+        new_correlation_matrix = new_correlation_matrix + torch.eye(new_correlation_matrix.shape[0], device=new_correlation_matrix.device)
     # Convert from covariance to correlation
     new_correlation_matrix = covariance2correlation(new_correlation_matrix)
     return new_correlation_matrix
