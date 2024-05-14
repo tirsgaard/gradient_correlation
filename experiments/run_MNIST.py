@@ -13,18 +13,18 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 
 config = edict(yaml.safe_load(open('configs/MNIST.yaml', 'r')))
-device = torch.device("cpu") #torch.device('cuda' if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else 'cpu'))
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 torch.manual_seed(1)
 model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
-loss = torch.nn.CrossEntropyLoss()
+loss = torch.nn.CrossEntropyLoss() #lambda x, y: 0.5*(x-y).pow(2).sum(-1).mean()  # 
 
 # Load the data
 train_data, val_data, test_data = get_MNIST(config.training.validation_split)
 # Shuffle the train data
 train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=True)
+val_loader = torch.utils.data.DataLoader(val_data, batch_size=1, shuffle=True, pin_memory=True)
 test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=True)
 
 n_samples = torch.logspace(1, 2, 2, dtype=int).round().int()
@@ -75,14 +75,14 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     # Train the model
     validation_losses = []
     validation_accuracies = []
-
+    
     for epoch in range(config.training.num_epochs):
         # Validate model
         val_loss, val_accuracy = validate(model, loss, val_loader, device)
         validation_losses.append(val_loss)
         validation_accuracies.append(val_accuracy)
-        
-        train_epoch(model, optimizer, loss, train_loader, device)
+        for j in range(10):
+            train_epoch(model, optimizer, loss, train_loader, device)
     
     # Get rankings for different sampling strategies
     passive_sampling_ranking = unsampled_indexes[torch.randperm(len(unsampled_indexes))]
@@ -103,6 +103,9 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     most_decor_points = rank_correlation_uniqueness(train_loader_single_batch, non_train_loader_single_batch, model, loss, optimizer)
     gradient_correlation_unique = unsampled_indexes[most_decor_points]
     
+    # Reset the model
+    model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
+    
     random_sampling_results = []
     uncertainty_sampling_results = []
     gradient_correlation_results = []
@@ -117,7 +120,8 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         random_sampling_results_epoch = []
         validation_res = []
         for epoch in range(config.training.num_epochs):
-            train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
+            for j in range(10):
+                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
             validation_res.append(validate(current_model, loss, val_loader, device))
         # add the validation score with highest accuracy
         best_epoch = max(validation_res, key=lambda x: x[1])
@@ -132,7 +136,8 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         uncertainty_sampling_results_epoch = []
         validation_res = []
         for epoch in range(config.training.num_epochs):
-            train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
+            for j in range(10):
+                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
             validation_res.append(validate(current_model, loss, val_loader, device))
         best_epoch = max(validation_res, key=lambda x: x[1])
         uncertainty_sampling_results_epoch.append(best_epoch)
@@ -146,7 +151,8 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         gradient_correlation_results_epoch = []
         validation_res = []
         for epoch in range(config.training.num_epochs):
-            train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
+            for j in range(10):
+                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
             validation_res.append(validate(current_model, loss, val_loader, device))
         best_epoch = max(validation_res, key=lambda x: x[1])
         gradient_correlation_results_epoch.append(best_epoch)
@@ -160,7 +166,8 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         gradient_correlation_cond_results_epoch = []
         validation_res = []
         for epoch in range(config.training.num_epochs):
-            train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
+            for j in range(10):
+                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
             validation_res.append(validate(current_model, loss, val_loader, device))
         best_epoch = max(validation_res, key=lambda x: x[1])
         gradient_correlation_cond_results_epoch.append(best_epoch)
@@ -174,7 +181,8 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         gradient_correlation_unique_results_epoch = []
         validation_res = []
         for epoch in range(config.training.num_epochs):
-            train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
+            for j in range(10):
+                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
             validation_res.append(validate(current_model, loss, val_loader, device))
         best_epoch = max(validation_res, key=lambda x: x[1])
         gradient_correlation_unique_results_epoch.append(best_epoch)
@@ -259,7 +267,7 @@ for n in tqdm(n_samples, desc='Running sample sizes for Uncertainty Sampling'):
     sample_validation_unc_accuracy.append(validation_accuracies)
 """
 n_start_data = 100
-n_rep = 10
+n_rep = 3
 results = []
 for i in tqdm(range(n_rep), desc='Running Repetitions'):
     indexes = torch.randperm(len(train_data))

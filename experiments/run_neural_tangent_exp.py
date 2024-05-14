@@ -22,9 +22,9 @@ loss = torch.nn.CrossEntropyLoss()
 epochs = 100
 # Load the data
 train_data, val_data, test_data = get_MNIST(0.1)
-gradient_batch_size = 128
+gradient_batch_size = 256
 # Shuffle the train data
-small_training_set = torch.utils.data.Subset(train_data, range(gradient_batch_size))
+small_training_set = torch.utils.data.Subset(train_data, torch.randperm(len(gradient_batch_size)))
 train_loader = torch.utils.data.DataLoader(small_training_set, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
 val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=True)
 gradient_loader = torch.utils.data.DataLoader(small_training_set, batch_size=1, shuffle=False, pin_memory=True)

@@ -5,12 +5,12 @@ data:
 
 model:
   hidden_size: 256
-  num_layers: 4
+  num_layers: 2
 
 training:
-  learning_rate: 0.005
+  learning_rate: 0.1
   batch_size: 64
-  num_epochs: 40
+  num_epochs: 10
   validation_split: 0.5
 
 validation:

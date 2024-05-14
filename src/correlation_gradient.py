@@ -1,4 +1,6 @@
 from typing import Iterable, Optional, Union
+from sklearn.decomposition import PCA
+from scipy.spatial import distance
 import torch
 
 def average_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
@@ -14,13 +16,14 @@ def average_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
         total_loss += loss(y_pred.float(), torch.tensor([i], dtype=torch.long).repeat(y_pred.shape[0])) * y_pred.softmax(-1)[:, i]
     return total_loss
 
-def get_gradient(model: torch.nn.Module, data: Iterable[torch.Tensor], loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, flatten: bool = False, use_label: bool = False) -> torch.Tensor:
+def get_gradient(model: torch.nn.Module, x: torch.Tensor, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, flatten: bool = False, use_label: bool = False, y: Optional[torch.Tensor] = None, pKernel: bool=False) -> torch.Tensor:
     """
     Get the gradient of each element of the batch in x of the model with respect to the loss function
     
     Args:
         model: the model to use
-        data: the input data [N_saples][...]
+        x: the input data [N_samples, ...]
+        y: the target data [N_samples, ...]
         loss_fn: the loss function to use
         opt: the optimizer to use
         positive: whether to perturb the loss function positively or negatively
@@ -31,19 +34,33 @@ def get_gradient(model: torch.nn.Module, data: Iterable[torch.Tensor], loss_fn: 
     """
     batch_gradients = []
     device = next(model.parameters()).device
-    for x, y_target in data:
-        x = x.to(device)
+    x = x.to(device)
+    if y is not None:
+        y = y.to(device).float()
+    
+    def pkernel_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
+        total_loss = 0.
+        n_classes = y_pred.shape[-1]
+        for i in range(n_classes):
+            y_target = torch.zeros_like(y_pred).scatter(1, torch.tensor([i], dtype=torch.long, device=y_pred.device).repeat(y_pred.shape[0]).unsqueeze(1), 1)
+            total_loss += loss(y_pred.float(), y_target)
+        total_loss = total_loss / n_classes**0.5
+        return total_loss
+
+    for i in range(len(x)):
         opt.zero_grad()
-        y_pred = model(x.unsqueeze(0))
-        
+        y_pred = model(x[i, None, ...])
         if use_label:
-            y_target = y_target.to(device).float()
-        else:
+            y_target = y[i, None]
+        else :
             y_target = y_pred.detach().argmax(1)
             y_target = torch.zeros_like(y_pred).scatter(1, y_target.unsqueeze(1), 1)
        
         # get one-hot encoding of y_target
-        loss = loss_fn(y_pred, y_target)
+        if pKernel:
+            loss = pkernel_loss(y_pred, loss_fn)
+        else:
+            loss = loss_fn(y_pred, y_target)
         loss.backward()
         grads = []
         for param in model.parameters():
@@ -71,7 +88,7 @@ def get_gradient_batch(model: torch.nn.Module, data: Iterable[torch.Tensor], los
     # Get the dimension of the parameters of the model
     n_params = sum(param.numel() for param in model.parameters())
     grads = torch.zeros(n_params)
-    
+        
     N_samples = 0
     opt.zero_grad()
     for x, y in data:
@@ -299,16 +316,16 @@ def rank_correlation_uniqueness(x_train: torch.Tensor, x_unlabel: torch.Tensor, 
     Returns:
         ranked_samples: the ranked samples
     """
+    # Compile x into a single tensor
+    x_train = torch.cat([xs for xs, _ in x_train], 0)
     train_gradient = get_gradient(model, x_train, loss_fn, opt, positive, flatten=True)
     train_gradient /= torch.norm(train_gradient, dim=-1)[..., None]
     train_gradient = train_gradient.sum(0)
+    x_unlabel = torch.cat([xs for xs, _ in x_unlabel], 0)
     unlabel_gradients = get_gradient(model, x_unlabel, loss_fn, opt, positive, flatten=True)
     combined_gradients = torch.cat([train_gradient[None, ...], unlabel_gradients + train_gradient[None, ...]])
     correlation_matrix = construct_correlation_matrix(combined_gradients)
     return correlation_matrix[0].sort().indices
-    
-    
-        
 
 
 def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, pre_condition_index: Optional[torch.Tensor]=None) -> torch.Tensor:
@@ -324,28 +341,11 @@ def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, l
     Returns:
         ranked_samples: the ranked samples
     """
-    grads = get_gradient(model, x, loss_fn, opt, positive, flatten= True)
+    # Compile x into a single tensor
+    x = torch.cat([xs for xs, _ in x], 0)
+    
+    grads = get_gradient(model, x, loss_fn, opt, positive, flatten= True, pKernel=True)
     correlation_matrix = construct_correlation_matrix(grads)    
-    #if len(pre_condition_index) > 0:
-    #    correlation_matrix = condition_on_observations(correlation_matrix, pre_condition_index, cor_cutoff=0.8)
-    
-    # Run PCA on correlation matrix and project x onto the first two principal components
-    import matplotlib.pyplot as plt
-    from sklearn.decomposition import PCA
-    pca = PCA(n_components=1)
-    pca.fit(correlation_matrix)
-    x_pca = pca.transform(correlation_matrix)
-    
-    # Rank points according to the maximum distance of the minimum distance to other points
-    from scipy.spatial import distance
-    distances = distance.cdist(x_pca, x_pca)
-    distances[range(len(x_pca)), range(len(x_pca))] = float('inf')  # Set diagonal to infinity
-    min_distances = distances[range(len(x_pca)), distances.argmin(axis=1)]
-    ranked_samples = min_distances.argsort()[::-1].copy()
-    return ranked_samples
-    
-    #for pre_cond_index in pre_condition_index:
-    #    correlation_matrix = condition_on_observation(correlation_matrix, pre_cond_index)
     if len(pre_condition_index) > 0:
         correlation_matrix = condition_on_observations(correlation_matrix, pre_condition_index, cor_cutoff=0.8)
     # Construct new correlation matrix without indexes conditioned on
@@ -354,4 +354,34 @@ def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, l
     non_condition_index = non_condition_index[ranked_samples]
     # Combine ranked samples with pre-conditioned indexes
     ranked_samples = torch.cat([pre_condition_index, ranked_samples])
+    return ranked_samples
+
+def rank_pca_information(x: Iterable[torch.Tensor], model: torch.nn.Module, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, pre_condition_index: Optional[torch.Tensor]=None) -> torch.Tensor:
+    """ Rank the samples by information
+    Args:
+        x: the input data [N_samples][...]
+        model: the model to use
+        loss_fn: the loss function to use
+        opt: the optimizer to use
+        positive: whether to perturb the loss function positively or negatively
+        pre_condition_index: the index to condition on in the beginning. Mostly used for trianing data. If None, no conditioning is done
+        
+    Returns:
+        ranked_samples: the ranked samples
+    """
+    # Compile x into a single tensor
+    x = torch.cat([xs for xs, _ in x], 0)
+    grads = get_gradient(model, x, loss_fn, opt, positive, flatten= True)
+    correlation_matrix = construct_correlation_matrix(grads)    
+
+    # Run PCA on correlation matrix and project x onto the first two principal components
+    pca = PCA(n_components=1)
+    pca.fit(correlation_matrix)
+    x_pca = pca.transform(correlation_matrix)
+    
+    # Rank points according to the maximum distance of the minimum distance to other points
+    distances = distance.cdist(x_pca, x_pca)
+    distances[range(len(x_pca)), range(len(x_pca))] = float('inf')  # Set diagonal to infinity
+    min_distances = distances[range(len(x_pca)), distances.argmin(axis=1)]
+    ranked_samples = min_distances.argsort()[::-1].copy()
     return ranked_samples

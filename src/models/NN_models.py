@@ -76,6 +76,7 @@ class own_linear_layer(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.beta = 0.1
         if bias:
             self.bias = nn.Parameter(torch.Tensor(out_features))
         else:
@@ -89,7 +90,7 @@ class own_linear_layer(nn.Module):
             nn.init.normal_(self.bias, mean=0.0, std=1.0)
     
     def forward(self, x):
-        return x @ self.weight.t()/torch.tensor([self.weight.shape[-1]]).float() + 0.1*self.bias
+        return x @ self.weight.t()/(self.weight.shape[-1]**0.5) + self.beta*self.bias
 
 
 class SingleLayerMLP(nn.Module):
@@ -105,6 +106,11 @@ class SingleLayerMLP(nn.Module):
         self.layers.append(own_linear_layer(input_size, hidden_size))
         self.layers.append(nn.ReLU())
         self.layers.append(own_linear_layer(hidden_size, output_size))
+        
+        # Initialize weights
+        for layer in self.layers:
+            if isinstance(layer, own_linear_layer):
+                layer.reset_parameters()
         
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
