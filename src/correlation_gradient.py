@@ -229,7 +229,8 @@ def condition_on_observation(correlation_matrix: torch.Tensor, index: int) -> to
     denom = torch.sqrt(((1-corr_squared[:, index])[:, None]*(1-corr_squared[index, :])[None, :]).clip(10**-6, float('inf')))
     new_correlation_matrix = (correlation_matrix - correlation_matrix[:, index][:, None]*correlation_matrix[index, :][None, :])/denom
     # Remove index from correlation matrix
-    new_correlation_matrix = new_correlation_matrix[range(n_dim) != index][:, torch.arange(n_dim) != index]
+    range_idx = torch.arange(n_dim, device=correlation_matrix.device) != index
+    new_correlation_matrix = new_correlation_matrix[range_idx][:, range_idx]
     
     if torch.linalg.cond(new_correlation_matrix) > 10**4:
         new_correlation_matrix = new_correlation_matrix + torch.eye(new_correlation_matrix.shape[0], device=new_correlation_matrix.device)
