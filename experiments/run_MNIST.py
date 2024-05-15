@@ -13,18 +13,19 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 
 config = edict(yaml.safe_load(open('configs/MNIST.yaml', 'r')))
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device("cpu")  # torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 torch.manual_seed(1)
 model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
 loss = torch.nn.CrossEntropyLoss() #lambda x, y: 0.5*(x-y).pow(2).sum(-1).mean()  # 
+loss_batched = torch.nn.CrossEntropyLoss(reduction='none')
 
 # Load the data
 train_data, val_data, test_data = get_MNIST(config.training.validation_split)
 # Shuffle the train data
 train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-val_loader = torch.utils.data.DataLoader(val_data, batch_size=1, shuffle=True, pin_memory=True)
+val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
 test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=True)
 
 n_samples = torch.logspace(1, 2, 2, dtype=int).round().int()
@@ -68,9 +69,9 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     non_indexed_data = torch.utils.data.Subset(train_data, unsampled_indexes[:max_add_subset])
     train_loader = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
     non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
-    train_loader_single_batch = torch.utils.data.DataLoader(indexed_data, batch_size=1, shuffle=False, pin_memory=True)
-    non_train_loader_single_batch = torch.utils.data.DataLoader(non_indexed_data, batch_size=1, shuffle=False, pin_memory=True)
-    comb_train_loader_single_batch = torch.utils.data.DataLoader(indexed_data + non_indexed_data, batch_size=1, shuffle=False, pin_memory=True)
+    train_loader_single_batch = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
+    non_train_loader_single_batch = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
+    comb_train_loader_single_batch = torch.utils.data.DataLoader(indexed_data + non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
 
     # Train the model
     validation_losses = []
@@ -92,101 +93,60 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     uncertainty_sampling_ranking = unsampled_indexes[most_unc_points.cpu()]
         
     # Gradient correlation sampling
-    most_decor_points = rank_sample_information(non_train_loader_single_batch, model, loss, optimizer, pre_condition_index=torch.tensor([], dtype=int))
+    most_decor_points = rank_sample_information(non_train_loader_single_batch, model, loss_batched, optimizer, pre_condition_index=torch.tensor([], dtype=int))
     gradient_correlation_ranking = unsampled_indexes[most_decor_points]
     
     # Gradient correlation sampling with conditioning on training data
-    most_decor_points = rank_sample_information(comb_train_loader_single_batch, model, loss, optimizer, pre_condition_index=torch.tensor(range(len(indexed_data)), dtype=int))
+    most_decor_points = rank_sample_information(comb_train_loader_single_batch, model, loss_batched, optimizer, pre_condition_index=torch.tensor(range(len(indexed_data)), dtype=int))
     gradient_correlation_cond_ranking = unsampled_indexes[most_decor_points]
     
     # Gradient correlation sampling with correlation to training data gradient
-    most_decor_points = rank_correlation_uniqueness(train_loader_single_batch, non_train_loader_single_batch, model, loss, optimizer)
+    most_decor_points = rank_correlation_uniqueness(train_loader_single_batch, non_train_loader_single_batch, model, loss_batched, optimizer)
     gradient_correlation_unique = unsampled_indexes[most_decor_points]
     
     # Reset the model
     model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
     
-    random_sampling_results = []
-    uncertainty_sampling_results = []
-    gradient_correlation_results = []
-    gradient_correlation_cond_results = []
-    gradient_correlation_unique_results = []
+    def run_sampling_experiment(data_loader, n_samples, model, loss):
+        data = indexed_data + torch.utils.data.Subset(train_data, data_loader[:n_samples])
+        train_data_loader = torch.utils.data.DataLoader(data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True, )
+        current_model = deepcopy(model)
+        current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
+        results_epoch = []
+        validation_res = []
+        for epoch in range(config.training.num_epochs):
+            for j in range(10):
+                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
+            validation_res.append(validate(current_model, loss, val_loader, device))
+        best_epoch = max(validation_res, key=lambda x: x[1])
+        results_epoch.append(best_epoch)
+        return list(zip(*results_epoch))
+        
     for n_samples in n_additional_samples:
         # Random sampling
         random_sampling_data = indexed_data + torch.utils.data.Subset(train_data, passive_sampling_ranking[:n_samples])
         train_data_loader = torch.utils.data.DataLoader(random_sampling_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True, )
-        current_model = deepcopy(model)
-        current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
-        random_sampling_results_epoch = []
-        validation_res = []
-        for epoch in range(config.training.num_epochs):
-            for j in range(10):
-                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
-            validation_res.append(validate(current_model, loss, val_loader, device))
-        # add the validation score with highest accuracy
-        best_epoch = max(validation_res, key=lambda x: x[1])
-        random_sampling_results_epoch.append(best_epoch)
-        random_sampling_results.append(list(zip(*random_sampling_results_epoch)))
+        random_sampling_results = run_sampling_experiment(passive_sampling_ranking, n_samples, model, loss)
         
         # Uncertainty sampling
         uncertainty_sampling_data = indexed_data + torch.utils.data.Subset(train_data, uncertainty_sampling_ranking[:n_samples])
         train_data_loader = torch.utils.data.DataLoader(uncertainty_sampling_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True, )
-        current_model = deepcopy(model)
-        current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
-        uncertainty_sampling_results_epoch = []
-        validation_res = []
-        for epoch in range(config.training.num_epochs):
-            for j in range(10):
-                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
-            validation_res.append(validate(current_model, loss, val_loader, device))
-        best_epoch = max(validation_res, key=lambda x: x[1])
-        uncertainty_sampling_results_epoch.append(best_epoch)
-        uncertainty_sampling_results.append(list(zip(*uncertainty_sampling_results_epoch)))
+        uncertainty_sampling_results = run_sampling_experiment(uncertainty_sampling_ranking, n_samples, model, loss)
             
         # Gradient correlation sampling
         gradient_correlation_data = indexed_data + torch.utils.data.Subset(train_data, gradient_correlation_ranking[:n_samples])
         train_data_loader = torch.utils.data.DataLoader(gradient_correlation_data, batch_size=config.training.batch_size, shuffle=True, )
-        current_model = deepcopy(model)
-        current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
-        gradient_correlation_results_epoch = []
-        validation_res = []
-        for epoch in range(config.training.num_epochs):
-            for j in range(10):
-                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
-            validation_res.append(validate(current_model, loss, val_loader, device))
-        best_epoch = max(validation_res, key=lambda x: x[1])
-        gradient_correlation_results_epoch.append(best_epoch)
-        gradient_correlation_results.append(list(zip(*gradient_correlation_results_epoch)))
+        gradient_correlation_results = run_sampling_experiment(gradient_correlation_ranking, n_samples, model, loss)
         
         # Gradient correlation sampling with conditioning on training data
         gradient_correlation_data = indexed_data + torch.utils.data.Subset(train_data, gradient_correlation_cond_ranking[:n_samples])
         train_data_loader = torch.utils.data.DataLoader(gradient_correlation_data, batch_size=config.training.batch_size, shuffle=True, )
-        current_model = deepcopy(model)
-        current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
-        gradient_correlation_cond_results_epoch = []
-        validation_res = []
-        for epoch in range(config.training.num_epochs):
-            for j in range(10):
-                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
-            validation_res.append(validate(current_model, loss, val_loader, device))
-        best_epoch = max(validation_res, key=lambda x: x[1])
-        gradient_correlation_cond_results_epoch.append(best_epoch)
-        gradient_correlation_cond_results.append(list(zip(*gradient_correlation_cond_results_epoch)))
+        gradient_correlation_cond_results = run_sampling_experiment(gradient_correlation_cond_ranking, n_samples, model, loss)
         
         # Gradient correlation sampling with correlation to training data gradient
         gradient_correlation_data = indexed_data + torch.utils.data.Subset(train_data, gradient_correlation_unique[:n_samples])
         train_data_loader = torch.utils.data.DataLoader(gradient_correlation_data, batch_size=config.training.batch_size, shuffle=True, )
-        current_model = deepcopy(model)
-        current_optimizer = torch.optim.Adam(current_model.parameters(), lr=config.training.learning_rate)
-        gradient_correlation_unique_results_epoch = []
-        validation_res = []
-        for epoch in range(config.training.num_epochs):
-            for j in range(10):
-                train_epoch(current_model, current_optimizer, loss, train_data_loader, device)
-            validation_res.append(validate(current_model, loss, val_loader, device))
-        best_epoch = max(validation_res, key=lambda x: x[1])
-        gradient_correlation_unique_results_epoch.append(best_epoch)
-        gradient_correlation_unique_results.append(list(zip(*gradient_correlation_unique_results_epoch)))
+        gradient_correlation_unique_results = run_sampling_experiment(gradient_correlation_unique, n_samples, model, loss)
         
     return random_sampling_results, uncertainty_sampling_results, gradient_correlation_results, gradient_correlation_cond_results, gradient_correlation_unique_results
 
@@ -233,7 +193,7 @@ def run_sequence_experiment(indexes: torch.Tensor, n_samples: int, unc_sample: b
         indexes[n_samples:max_samples] = indexes[n_samples:max_samples][most_unc_points]
         
     if corr_sample and len(non_train_loader) > 0:
-        most_unc_points = rank_sample_information(non_train_loader, model, loss, optimizer, pre_condition_index=torch.tensor(range(n_samples)))
+        most_unc_points = rank_sample_information(non_train_loader, model, loss_batched, optimizer, pre_condition_index=torch.tensor(range(n_samples)))
         indexes[:max_samples] = indexes[:max_samples][most_unc_points]
         
     val_loss, val_accuracy = validate(model, loss, val_loader, device)
