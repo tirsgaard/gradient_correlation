@@ -7,11 +7,20 @@ from torchvision import transforms
 def get_MNIST_train() -> torchvision.datasets.MNIST:
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     trainset = torchvision.datasets.MNIST(root='./data/', train=True, download=True, transform=transform)
+    # Precompute the full dataset
+    trainset = list(trainset)
+    # Transfer to device
+    device = "cpu"
+    trainset = [(x.to(device), y) for x, y in trainset]
     return trainset
 
 def get_MNIST_test() -> torchvision.datasets.MNIST:
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     testset = torchvision.datasets.MNIST(root='./data/', train=False, download=True, transform=transform)
+    # Precompute the full dataset
+    testset = list(testset)
+    device = "cpu"
+    testset = [(x.to(device), y) for x, y in testset]
     return testset
 
 def get_binary_MNIST(digits: tuple[int, int], val_split: float) -> tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
@@ -60,8 +69,9 @@ def get_MNIST(val_split: float, one_hot: bool=True) -> tuple[torch.utils.data.Da
     test_data = get_MNIST_test()
     if one_hot:
         # Convert the classes to one-hot vectors
-        train_data = [(x, torch.nn.functional.one_hot(torch.tensor(y), num_classes=10)) for x, y in train_data]
-        test_data = [(x, torch.nn.functional.one_hot(torch.tensor(y), num_classes=10)) for x, y in test_data]
+        device = "mps"
+        train_data = [(x, torch.nn.functional.one_hot(torch.tensor(y), num_classes=10).to(device)) for x, y in train_data]
+        test_data = [(x, torch.nn.functional.one_hot(torch.tensor(y), num_classes=10).to(device)) for x, y in test_data]
 
     # Split the training set into training and validation
     train_size = int((1 - val_split) * len(train_data))

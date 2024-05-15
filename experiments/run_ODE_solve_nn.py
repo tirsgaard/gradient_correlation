@@ -37,7 +37,7 @@ class GaussianFit(torch.nn.Module):
         y = torch.cat(ys, 0).to(device)
         y_hat = torch.cat(y_hats, 0).to(device)
         label_diff = y - y_hat
-        self.grads = get_gradient(self.model, xs, loss, optimizer, True, True, y=y, pKernel=True)
+        self.grads = get_gradient(self.model, xs, loss_batched, optimizer, True, True, y=y, pKernel=True)
         #self.grads = self.grads - self.grads.mean(-1, keepdim=True)
         covarinace_matrix = self.grads@self.grads.T
         covarinace_matrix = covarinace_matrix
@@ -45,7 +45,7 @@ class GaussianFit(torch.nn.Module):
         #self.W = svd_pseudo_inverse(covarinace_matrix, 10) @ label_diff
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x_grad = get_gradient(self.model, x, loss, optimizer, True, True, pKernel=True)
+        x_grad = get_gradient(self.model, x, loss_batched, optimizer, True, True, pKernel=True)
         #x_grad = x_grad - x_grad.mean(-1, keepdim=True)
         K_xX = x_grad@self.grads.T
         with torch.no_grad():
@@ -55,6 +55,8 @@ class GaussianFit(torch.nn.Module):
 def MSELoss(y_hat, y):
     return 0.5*(y_hat-y).pow(2).sum(-1).mean()
 
+def MSELoss_batch(y_hat, y):
+    return 0.5*(y_hat-y).pow(2).sum(-1)
 
 config = edict(yaml.safe_load(open('configs/MNIST.yaml', 'r')))
 device = torch.device('cpu')  #torch.device('cuda' if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else 'cpu'))
@@ -64,6 +66,7 @@ def move_collate(batch):
 if __name__ == '__main__':
     torch.manual_seed(1)
     loss = MSELoss
+    loss_batched = MSELoss_batch
     epochs = 10
     # Load the data
     train_data, val_data, test_data = get_MNIST(0.1)
@@ -76,9 +79,9 @@ if __name__ == '__main__':
     collate_func = move_collate
     small_training_set = torch.utils.data.Subset(train_data, range(gradient_batch_size))
     small_validation_set = torch.utils.data.Subset(val_data, range(gradient_batch_size))
-    train_loader = torch.utils.data.DataLoader(small_training_set, batch_size=gradient_batch_size, shuffle=True, pin_memory=True)
-    val_loader = torch.utils.data.DataLoader(small_validation_set, batch_size=1, shuffle=False, pin_memory=True)
-    gradient_loader = torch.utils.data.DataLoader(small_training_set, batch_size=1, shuffle=False, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(small_training_set, batch_size=gradient_batch_size, shuffle=True)
+    val_loader = torch.utils.data.DataLoader(small_validation_set, batch_size=gradient_batch_size, shuffle=False, pin_memory=True)
+    gradient_loader = torch.utils.data.DataLoader(small_training_set, batch_size=gradient_batch_size, shuffle=False, pin_memory=True)
 
     validation_acc = torch.zeros((3, epochs))
 
@@ -86,7 +89,7 @@ if __name__ == '__main__':
     N_hidden = 256
     model = SingleLayerMLP(input_size=784, output_size=10, hidden_size=N_hidden).to(device)
     initial_model = deepcopy(model)
-    optimizer = torch.optim.SGD(model.parameters(), lr=config.training.learning_rate, momentum=0.)
+    optimizer = torch.optim.SGD(model.parameters(), lr=config.training.learning_rate, momentum=0.9)
     epoch = 20
 
     def validate_model(model, val_loader):
@@ -100,17 +103,16 @@ if __name__ == '__main__':
     # Train the model and fit the kernel
     validation_acc_list = []
     validation_kernel_acc_list = []
-    for j in tqdm(range(epochs)):
+    for j in tqdm(range(epochs)): 
         kernel_model = GaussianFit(model)
         kernel_model.fit(gradient_loader)
         validation_kernel_acc_list.append(validate_model(kernel_model, val_loader))
         validation_acc_list.append(validate_model(model, val_loader))
         model.train()
-        for j in range(2500):
+        for j in range(500):
             train_epoch(model, optimizer, loss, train_loader, device)
-        
-    validation_acc = torch.stack(validation_acc_list)
-    validation_kernel_acc = torch.stack(validation_kernel_acc_list)
+    validation_acc = torch.stack(validation_acc_list).cpu()
+    validation_kernel_acc = torch.stack(validation_kernel_acc_list).cpu()
 
 
     small_training_set = torch.utils.data.Subset(train_data, range(gradient_batch_size))
@@ -136,8 +138,8 @@ if __name__ == '__main__':
         for j in range(50):
             train_epoch(model, optimizer, loss, train_loader, device)
             
-    validation_acc_full = torch.stack(validation_acc_list)
-    validation_kernel_acc_full = torch.stack(validation_kernel_acc_list)
+    validation_acc_full = torch.stack(validation_acc_list).cpu()
+    validation_kernel_acc_full = torch.stack(validation_kernel_acc_list).cpu()
 
     plt.figure()
     plt.plot(validation_acc, label='Traning model GD', color='blue')

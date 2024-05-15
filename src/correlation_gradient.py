@@ -32,7 +32,7 @@ def get_gradient(model: torch.nn.Module, x: torch.Tensor, loss_fn: callable, opt
     Returns:
         grads: the gradients of the model with respect to the loss function
     """
-    batch_gradients = []
+    B = len(x)
     device = next(model.parameters()).device
     x = x.to(device)
     if y is not None:
@@ -42,33 +42,27 @@ def get_gradient(model: torch.nn.Module, x: torch.Tensor, loss_fn: callable, opt
         total_loss = 0.
         n_classes = y_pred.shape[-1]
         for i in range(n_classes):
-            y_target = torch.zeros_like(y_pred).scatter(1, torch.tensor([i], dtype=torch.long, device=y_pred.device).repeat(y_pred.shape[0]).unsqueeze(1), 1)
+            y_target = torch.zeros_like(y_pred).scatter(1, torch.tensor([i], dtype=torch.long, device=y_pred.device).repeat(B).unsqueeze(1), 1)
             total_loss += loss(y_pred.float(), y_target)
         total_loss = total_loss / n_classes**0.5
         return total_loss
 
-    for i in range(len(x)):
-        opt.zero_grad()
-        y_pred = model(x[i, None, ...])
-        if use_label:
-            y_target = y[i, None]
-        else :
-            y_target = y_pred.detach().argmax(1)
-            y_target = torch.zeros_like(y_pred).scatter(1, y_target.unsqueeze(1), 1)
+    opt.zero_grad()
+    y_pred = model(x)
+    if use_label:
+        y_target = y
+    else:
+        y_target = y_pred.detach().argmax(1)
+        y_target = torch.zeros_like(y_pred).scatter(1, y_target.unsqueeze(1), 1)
        
-        # get one-hot encoding of y_target
-        if pKernel:
-            loss = pkernel_loss(y_pred, loss_fn)
-        else:
-            loss = loss_fn(y_pred, y_target)
-        loss.backward()
-        grads = []
-        for param in model.parameters():
-                grads.append(param.grad.detach())
-        if flatten:
-            grads = torch.cat([grad.view(-1) for grad in grads])
-        batch_gradients.append(grads)
-    grads = torch.stack(batch_gradients)
+    # get one-hot encoding of y_target
+    if pKernel:
+        loss = pkernel_loss(y_pred, loss_fn)
+    else:
+        loss = loss_fn(y_pred, y_target)
+    grads = torch.autograd.grad(loss, model.parameters(), is_grads_batched=True, grad_outputs=torch.eye(B).to(device))
+    if flatten:
+        grads = torch.cat([grad.view((B, -1)) for grad in grads], -1)
     return grads
 
 def get_gradient_batch(model: torch.nn.Module, data: Iterable[torch.Tensor], loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True) -> torch.Tensor:

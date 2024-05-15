@@ -111,6 +111,7 @@ class SingleLayerMLP(nn.Module):
         for layer in self.layers:
             if isinstance(layer, own_linear_layer):
                 layer.reset_parameters()
+                
         
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:

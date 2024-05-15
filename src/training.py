@@ -1,5 +1,5 @@
 import torch
-
+from time import time
 
 def train_epoch(model: torch.nn.Module, optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, train_loader: torch.utils.data.DataLoader, device: torch.device) -> None:
     """ Train the model for one epoch
@@ -16,6 +16,7 @@ def train_epoch(model: torch.nn.Module, optimizer: torch.optim.Optimizer, criter
     """
     model.train()
     for i, (x, y) in enumerate(train_loader):
+        t = time()
         optimizer.zero_grad()
         x, y = x.to(device), y.to(device)
         y_hat = model(x)
