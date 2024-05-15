@@ -60,8 +60,6 @@ def MSELoss_batch(y_hat, y):
 
 config = edict(yaml.safe_load(open('configs/MNIST.yaml', 'r')))
 device = torch.device('cpu')  #torch.device('cuda' if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else 'cpu'))
-def move_collate(batch):
-    return tuple(x.to(device) for x in default_collate(batch))
 
 if __name__ == '__main__':
     torch.manual_seed(1)
@@ -69,14 +67,13 @@ if __name__ == '__main__':
     loss_batched = MSELoss_batch
     epochs = 10
     # Load the data
-    train_data, val_data, test_data = get_MNIST(0.1)
+    train_data, val_data, test_data = get_MNIST(0.1, device=device)
     
     gradient_batch_size = 128
     # Shuffle the train data
     train_data = torch.utils.data.Subset(train_data, torch.randperm(len(train_data)))
     val_data = torch.utils.data.Subset(val_data, torch.randperm(len(val_data)))
 
-    collate_func = move_collate
     small_training_set = torch.utils.data.Subset(train_data, range(gradient_batch_size))
     small_validation_set = torch.utils.data.Subset(val_data, range(gradient_batch_size))
     train_loader = torch.utils.data.DataLoader(small_training_set, batch_size=gradient_batch_size, shuffle=True)

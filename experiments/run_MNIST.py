@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 
 config = edict(yaml.safe_load(open('configs/MNIST.yaml', 'r')))
-device = torch.device("cpu")  # torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 torch.manual_seed(1)
 model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
@@ -22,7 +22,7 @@ loss = torch.nn.CrossEntropyLoss() #lambda x, y: 0.5*(x-y).pow(2).sum(-1).mean()
 loss_batched = torch.nn.CrossEntropyLoss(reduction='none')
 
 # Load the data
-train_data, val_data, test_data = get_MNIST(config.training.validation_split)
+train_data, val_data, test_data = get_MNIST(config.training.validation_split, device=device)
 # Shuffle the train data
 train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
 val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
@@ -122,31 +122,26 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         results_epoch.append(best_epoch)
         return list(zip(*results_epoch))
         
+    random_sampling_results = []
+    uncertainty_sampling_results = []
+    gradient_correlation_results = []
+    gradient_correlation_cond_results = []
+    gradient_correlation_unique_results = []
     for n_samples in n_additional_samples:
         # Random sampling
-        random_sampling_data = indexed_data + torch.utils.data.Subset(train_data, passive_sampling_ranking[:n_samples])
-        train_data_loader = torch.utils.data.DataLoader(random_sampling_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True, )
-        random_sampling_results = run_sampling_experiment(passive_sampling_ranking, n_samples, model, loss)
+        random_sampling_results.append(run_sampling_experiment(passive_sampling_ranking, n_samples, model, loss))
         
         # Uncertainty sampling
-        uncertainty_sampling_data = indexed_data + torch.utils.data.Subset(train_data, uncertainty_sampling_ranking[:n_samples])
-        train_data_loader = torch.utils.data.DataLoader(uncertainty_sampling_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True, )
-        uncertainty_sampling_results = run_sampling_experiment(uncertainty_sampling_ranking, n_samples, model, loss)
+        uncertainty_sampling_results.append(run_sampling_experiment(uncertainty_sampling_ranking, n_samples, model, loss))
             
         # Gradient correlation sampling
-        gradient_correlation_data = indexed_data + torch.utils.data.Subset(train_data, gradient_correlation_ranking[:n_samples])
-        train_data_loader = torch.utils.data.DataLoader(gradient_correlation_data, batch_size=config.training.batch_size, shuffle=True, )
-        gradient_correlation_results = run_sampling_experiment(gradient_correlation_ranking, n_samples, model, loss)
+        gradient_correlation_results.append(run_sampling_experiment(gradient_correlation_ranking, n_samples, model, loss))
         
         # Gradient correlation sampling with conditioning on training data
-        gradient_correlation_data = indexed_data + torch.utils.data.Subset(train_data, gradient_correlation_cond_ranking[:n_samples])
-        train_data_loader = torch.utils.data.DataLoader(gradient_correlation_data, batch_size=config.training.batch_size, shuffle=True, )
-        gradient_correlation_cond_results = run_sampling_experiment(gradient_correlation_cond_ranking, n_samples, model, loss)
+        gradient_correlation_cond_results.append(run_sampling_experiment(gradient_correlation_cond_ranking, n_samples, model, loss))
         
         # Gradient correlation sampling with correlation to training data gradient
-        gradient_correlation_data = indexed_data + torch.utils.data.Subset(train_data, gradient_correlation_unique[:n_samples])
-        train_data_loader = torch.utils.data.DataLoader(gradient_correlation_data, batch_size=config.training.batch_size, shuffle=True, )
-        gradient_correlation_unique_results = run_sampling_experiment(gradient_correlation_unique, n_samples, model, loss)
+        gradient_correlation_unique_results.append(run_sampling_experiment(gradient_correlation_unique, n_samples, model, loss))
         
     return random_sampling_results, uncertainty_sampling_results, gradient_correlation_results, gradient_correlation_cond_results, gradient_correlation_unique_results
 

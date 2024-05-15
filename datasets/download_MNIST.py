@@ -4,7 +4,7 @@ from torchvision import transforms
 
 
 
-def get_MNIST_train() -> torchvision.datasets.MNIST:
+def get_MNIST_train(device: str = "cpu") -> torchvision.datasets.MNIST:
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     trainset = torchvision.datasets.MNIST(root='./data/', train=True, download=True, transform=transform)
     # Precompute the full dataset
@@ -14,12 +14,12 @@ def get_MNIST_train() -> torchvision.datasets.MNIST:
     trainset = [(x.to(device), y) for x, y in trainset]
     return trainset
 
-def get_MNIST_test() -> torchvision.datasets.MNIST:
+def get_MNIST_test(device: str = "cpu") -> torchvision.datasets.MNIST:
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     testset = torchvision.datasets.MNIST(root='./data/', train=False, download=True, transform=transform)
     # Precompute the full dataset
     testset = list(testset)
-    device = "cpu"
+    
     testset = [(x.to(device), y) for x, y in testset]
     return testset
 
@@ -53,11 +53,12 @@ def get_binary_MNIST(digits: tuple[int, int], val_split: float) -> tuple[torch.u
     
     return train_data, val_data, test_data
 
-def get_MNIST(val_split: float, one_hot: bool=True) -> tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
+def get_MNIST(val_split: float, one_hot: bool=True, device: str = "cpu") -> tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, torch.utils.data.Dataset]:
     """ Function for loading the MNIST dataset with the specified validation split. 
     Args:
         val_split: The proportion of the training set to use for validation
         one_hot: Whether to return the classes as one-hot vectors
+        device: The device to store the data on
         
         Returns:
             train_data: The training set
@@ -65,11 +66,10 @@ def get_MNIST(val_split: float, one_hot: bool=True) -> tuple[torch.utils.data.Da
             test_data: The test set
     """
     # Load the data
-    train_data = get_MNIST_train()
-    test_data = get_MNIST_test()
+    train_data = get_MNIST_train(device)
+    test_data = get_MNIST_test(device)
     if one_hot:
         # Convert the classes to one-hot vectors
-        device = "mps"
         train_data = [(x, torch.nn.functional.one_hot(torch.tensor(y), num_classes=10).to(device)) for x, y in train_data]
         test_data = [(x, torch.nn.functional.one_hot(torch.tensor(y), num_classes=10).to(device)) for x, y in test_data]
 
