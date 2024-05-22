@@ -2,6 +2,7 @@ from typing import Iterable, Optional, Union
 from sklearn.decomposition import PCA
 from scipy.spatial import distance
 import torch
+from tqdm import tqdm
 
 def average_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
     """ Compute the average loss using the probabilities
@@ -15,6 +16,22 @@ def average_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
     for i in range(y_pred.shape[-1]):
         total_loss += loss(y_pred.float(), torch.tensor([i], dtype=torch.long).repeat(y_pred.shape[0])) * y_pred.softmax(-1)[:, i]
     return total_loss
+
+def pkernel_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
+    total_loss = 0.
+    B = y_pred.shape[0]
+    n_classes = y_pred.shape[-1]
+    for i in range(n_classes):
+        y_target = torch.zeros_like(y_pred).scatter(1, torch.tensor([i], dtype=torch.long, device=y_pred.device).repeat(B).unsqueeze(1), 1)
+        total_loss += loss(y_pred.float(), y_target)
+    total_loss = total_loss / n_classes**0.5
+    return total_loss
+
+def svd_pseudo_inverse(matrix: torch.Tensor, k: int) -> torch.Tensor:
+    u, s, v = torch.svd(matrix)
+    s_inv = 1/s
+    s_inv[k:] = 0
+    return v @ torch.diag(s_inv) @ u.T
 
 def get_gradient(model: torch.nn.Module, x: torch.Tensor, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, flatten: bool = False, use_label: bool = False, y: Optional[torch.Tensor] = None, pKernel: bool=False) -> torch.Tensor:
     """
@@ -37,16 +54,6 @@ def get_gradient(model: torch.nn.Module, x: torch.Tensor, loss_fn: callable, opt
     x = x.to(device)
     if y is not None:
         y = y.to(device).float()
-    
-    def pkernel_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
-        total_loss = 0.
-        n_classes = y_pred.shape[-1]
-        for i in range(n_classes):
-            y_target = torch.zeros_like(y_pred).scatter(1, torch.tensor([i], dtype=torch.long, device=y_pred.device).repeat(B).unsqueeze(1), 1)
-            total_loss += loss(y_pred.float(), y_target)
-        total_loss = total_loss / n_classes**0.5
-        return total_loss
-
     opt.zero_grad()
     y_pred = model(x)
     if use_label:
@@ -133,8 +140,7 @@ def maximum_determinant_ranking(full_matrix: torch.Tensor) -> torch.Tensor:
     added_indexes[first_index] = True
     
     stop_iteration = 300
-    from tqdm import tqdm
-    for i in tqdm(range(1, stop_iteration)):
+    for i in range(1, stop_iteration):
         max_det = 0
         A = full_matrix[indexes[:i]][:, indexes[:i]]
         not_added_indexes = torch.arange(full_matrix.shape[0])[~added_indexes]
@@ -168,23 +174,6 @@ def maximum_determinant_ranking(full_matrix: torch.Tensor) -> torch.Tensor:
     # Add remaining indexes
     indexes[stop_iteration:] = torch.arange(full_matrix.shape[0])[~added_indexes]
     return indexes
-    
-    
-
-def construct_covariance_matrix(grads: torch.Tensor) -> torch.Tensor:
-    """ Construct the covariance matrix from the gradients
-    Args:
-        grads: the gradients to use [batch_size, n_params]
-        
-    Returns:
-        covariance_matrix: the covariance matrix [n_params, n_params]
-    """
-    normalised_gradients = grads - grads.mean(axis=0)[None, ...]
-    length = torch.norm(normalised_gradients, dim=-1)
-    normalised_gradients = normalised_gradients/length[..., None]
-    correlation_matrix = torch.matmul(normalised_gradients, normalised_gradients.T)
-    covariance_matrix = correlation_matrix*torch.outer(length, length)
-    return covariance_matrix
 
 def get_most_informative_index(correlation_matrix: torch.Tensor) -> int:
     """ Get the most informative index from the correlation matrix
@@ -232,35 +221,44 @@ def condition_on_observation(correlation_matrix: torch.Tensor, index: int) -> to
     new_correlation_matrix = new_correlation_matrix.clip(-1, 1)
     return new_correlation_matrix
 
-def condition_on_observations(correlation_matrix: torch.Tensor, indexes: torch.Tensor, cor_cutoff: float = 0.99) -> torch.Tensor:
-    """ Condition the correlation matrix of a list of observations
+def condition_on_observations(covariance_matrix: torch.Tensor, indexes: torch.Tensor, cor_cutoff: float = 0.99, is_corr: bool = True) -> torch.Tensor:
+    """ Condition the covariance / correlation matrix of a list of observations.
+    If the correlation between two indexes is above the cor_cutoff, the first index is removed.
+    If is is_corr, the matrix is assumed to be a correlation matrix and the output will be a correlation matrix.
+    
     Args:
         correlation_matrix: the correlation matrix to use [n_dim, n_dim]
         indexes: the list of indexes to condition on
+        cor_cutoff: the cutoff for the correlation
+        is_corr: whether the matrix is a correlation matrix
         
     Returns:
         new_correlation_matrix: the new correlation matrix
     """
     # Remove highly intercorrelated indexes before conditioning for numerical stability
     dropped_points = torch.zeros(len(indexes), dtype=bool)
-    for i in range(len(indexes)):
-        for j in range(i+1, len(indexes)):
-            if correlation_matrix[indexes[i], indexes[j]].abs() > cor_cutoff:
-                dropped_points[indexes[j]] = True
+    if is_corr:
+        for i in range(len(indexes)):
+            for j in range(i+1, len(indexes)):
+                if covariance_matrix[indexes[i], indexes[j]].abs() > cor_cutoff:
+                    dropped_points[j] = True
     
-    indexes_not_used = [i for i in range(correlation_matrix.shape[0]) if i not in indexes]
+    indexes_not_used = [i for i in range(covariance_matrix.shape[0]) if i not in indexes]
     indexes = indexes[~dropped_points]  # Remove highly correlated indexes
-    sigma11 = correlation_matrix[indexes_not_used][:, indexes_not_used]
-    sigma22 = correlation_matrix[indexes][:, indexes]
-    sigma12 = correlation_matrix[indexes_not_used][:, indexes]
-    sigma21 = correlation_matrix[indexes][:, indexes_not_used]
+    sigma11 = covariance_matrix[indexes_not_used][:, indexes_not_used]
+    sigma22 = covariance_matrix[indexes][:, indexes]
+    sigma12 = covariance_matrix[indexes_not_used][:, indexes]
+    sigma21 = covariance_matrix[indexes][:, indexes_not_used]
+    #sigma22_inv = svd_pseudo_inverse(sigma22, int((sigma22.shape[0]*0.9+1)//1))
+    #sigma_cond = sigma12 @ (sigma22_inv @ sigma21)  #. torch.linalg.solve(sigma22, sigma21)
     sigma_cond = sigma12 @ torch.linalg.solve(sigma22, sigma21)
     sigma_cond = (sigma_cond + sigma_cond.T)/2  # Ensure symmetry
     new_correlation_matrix = sigma11 - sigma_cond
-    if torch.linalg.cond(new_correlation_matrix) > 10**4:
-        new_correlation_matrix = new_correlation_matrix + torch.eye(new_correlation_matrix.shape[0], device=new_correlation_matrix.device)
+    #if torch.linalg.cond(new_correlation_matrix) > 10**4:
+    #    new_correlation_matrix = new_correlation_matrix + torch.eye(new_correlation_matrix.shape[0], device=new_correlation_matrix.device)
     # Convert from covariance to correlation
-    new_correlation_matrix = covariance2correlation(new_correlation_matrix)
+    if is_corr:
+        new_correlation_matrix = covariance2correlation(new_correlation_matrix)
     return new_correlation_matrix
 
 def covariance2correlation(covariance_matrix: torch.Tensor) -> torch.Tensor:
@@ -298,6 +296,56 @@ def rank_correlation_information(correlation_matrix: torch.Tensor) -> torch.Tens
             break
     return ranked_samples
 
+def rank_correlation_information_SVD(correlation_matrix: torch.Tensor, cutoff_number: int = 200) -> torch.Tensor:
+    """ Rank the samples by information
+    Args:
+        correlation_matrix: the correlation matrix to use [n_dim, n_dim]
+        cutoff_number: the max number of samples to rank before adding random samples
+        
+    Returns:
+        ranked_samples: the ranked samples
+    """
+    n_dim = correlation_matrix.shape[0]
+    ranked_samples = torch.zeros(n_dim, dtype=int)
+    existing_indexes = torch.ones(n_dim, dtype=bool)
+    current_correlation_matrix = correlation_matrix
+    for i in range(n_dim):
+        local_index = get_most_informative_index(current_correlation_matrix)
+        index = torch.arange(n_dim)[existing_indexes][local_index]  # Get the index in the original correlation matrix
+        ranked_samples[i] = index
+        existing_indexes[index] = False
+        current_correlation_matrix = condition_on_observations(correlation_matrix, ranked_samples[:(i + 1)])
+        if current_correlation_matrix.isnan().any() or i >= cutoff_number:
+            # Add remaining indexes to ranked samples
+            ranked_samples[i+1:] = torch.arange(n_dim)[existing_indexes]
+            break
+    return ranked_samples
+
+def rank_covariance_information_SVD(covariance_matrix: torch.Tensor, cutoff_number: int = 200) -> torch.Tensor:
+    """ Rank the samples by information
+    Args:
+        covariance_matrix: the correlation matrix to use [n_dim, n_dim]
+        
+    Returns:
+        ranked_samples: the ranked samples
+    """
+    n_dim = covariance_matrix.shape[0]
+    ranked_samples = torch.zeros(n_dim, dtype=int)
+    existing_indexes = torch.ones(n_dim, dtype=bool)
+    current_covariance_matrix = covariance_matrix
+    for i in range(n_dim):
+        local_index = current_covariance_matrix.diag().argmax()
+        index = torch.arange(n_dim)[existing_indexes][local_index]  # Get the index in the original correlation matrix
+        ranked_samples[i] = index
+        existing_indexes[index] = False
+        current_covariance_matrix = condition_on_observations(covariance_matrix, ranked_samples[:(i + 1)], is_corr=False)
+        if current_covariance_matrix.isnan().any() or i>=cutoff_number:
+            # Add remaining indexes to ranked samples
+            ranked_samples[i+1:] = torch.arange(n_dim)[existing_indexes]
+            break
+    return ranked_samples
+
+
 def rank_correlation_uniqueness(x_train: torch.Tensor, x_unlabel: torch.Tensor, model: torch.nn.Module, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True) -> torch.Tensor:
     """ Rank the samples by uniqueness (decorrelation) of the gradients from trianing data
     Args:
@@ -323,7 +371,7 @@ def rank_correlation_uniqueness(x_train: torch.Tensor, x_unlabel: torch.Tensor, 
     return correlation_matrix[0].sort().indices
 
 
-def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, pre_condition_index: Optional[torch.Tensor]=None) -> torch.Tensor:
+def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, pre_condition_index: Optional[torch.Tensor]=None, cutoff_number: int = 200) -> torch.Tensor:
     """ Rank the samples by information
     Args:
         x: the input data [N_samples][...]
@@ -345,11 +393,42 @@ def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, l
         correlation_matrix = condition_on_observations(correlation_matrix, pre_condition_index, cor_cutoff=0.8)
     # Construct new correlation matrix without indexes conditioned on
     non_condition_index = torch.tensor([i for i in range(len(x)) if i not in pre_condition_index])
-    ranked_samples = rank_correlation_information(correlation_matrix)
+    ranked_samples = rank_correlation_information_SVD(correlation_matrix,  cutoff_number)
     non_condition_index = non_condition_index[ranked_samples]
     # Combine ranked samples with pre-conditioned indexes
-    ranked_samples = torch.cat([pre_condition_index, ranked_samples])
+    ranked_samples = torch.cat([non_condition_index, ranked_samples])
     return ranked_samples
+
+def rank_uncertainty_information(x: Iterable[torch.Tensor], model: torch.nn.Module, loss_fn: callable, opt: torch.optim.Optimizer, unc, positive: bool = True, pre_condition_index: Optional[torch.Tensor]=None, cutoff_number: int = 200) -> torch.Tensor:
+    """ Rank the samples by information
+    Args:
+        x: the input data [N_samples][...]
+        model: the model to use
+        loss_fn: the loss function to use
+        opt: the optimizer to use
+        positive: whether to perturb the loss function positively or negatively
+        pre_condition_index: the index to condition on in the beginning. Mostly used for trianing data. If None, no conditioning is done
+        
+    Returns:
+        ranked_samples: the ranked samples
+    """
+    # Compile x into a single tensor
+    x = torch.cat([xs for xs, _ in x], 0)
+    
+    grads = get_gradient(model, x, loss_fn, opt, positive, flatten=True, pKernel=False)
+    covariance_matrix = construct_correlation_matrix(grads)
+    covariance_matrix = covariance_matrix * ((1-unc)[:, None] * (1-unc)[None, :])
+    # Set anything but diagonal to zero
+    #covariance_matrix = torch.diag(covariance_matrix.diag()*)
+    if len(pre_condition_index) > 0:
+        covariance_matrix = condition_on_observations(covariance_matrix, pre_condition_index, cor_cutoff=0.8)
+    # Construct new correlation matrix without indexes conditioned on
+    non_condition_index = torch.tensor([i for i in range(len(x)) if i not in pre_condition_index])
+    ranked_samples = rank_covariance_information_SVD(covariance_matrix, cutoff_number)
+    non_condition_index = non_condition_index[ranked_samples]
+    # Combine ranked samples with pre-conditioned indexes
+    ranked_samples = torch.cat([non_condition_index, ranked_samples])
+    return ranked_samples, covariance_matrix
 
 def rank_pca_information(x: Iterable[torch.Tensor], model: torch.nn.Module, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, pre_condition_index: Optional[torch.Tensor]=None) -> torch.Tensor:
     """ Rank the samples by information

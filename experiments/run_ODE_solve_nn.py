@@ -6,7 +6,7 @@ from src.models.NN_models import SingleLayerMLP, SimpleMLP
 import yaml
 from datasets.download_MNIST import get_MNIST
 from src.training import train_epoch, validate, test
-from src.correlation_gradient import get_gradient, rank_sample_information, rank_correlation_uniqueness, construct_covariance_matrix
+from src.correlation_gradient import get_gradient, rank_sample_information, rank_correlation_uniqueness, construct_correlation_matrix
 from tqdm import tqdm
 from easydict import EasyDict as edict
 import matplotlib.pyplot as plt
@@ -41,8 +41,8 @@ class GaussianFit(torch.nn.Module):
         #self.grads = self.grads - self.grads.mean(-1, keepdim=True)
         covarinace_matrix = self.grads@self.grads.T
         covarinace_matrix = covarinace_matrix
-        self.W = torch.linalg.solve(covarinace_matrix.cpu(), label_diff.cpu()).to(device)
-        #self.W = svd_pseudo_inverse(covarinace_matrix, 10) @ label_diff
+        #self.W = torch.linalg.solve(covarinace_matrix.cpu(), label_diff.cpu()).to(device)
+        self.W = svd_pseudo_inverse(covarinace_matrix, 100) @ label_diff
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_grad = get_gradient(self.model, x, loss_batched, optimizer, True, True, pKernel=True)

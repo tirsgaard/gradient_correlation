@@ -6,7 +6,7 @@ from src.models.NN_models import SingleLayerMLP
 import yaml
 from datasets.download_MNIST import get_MNIST
 from src.training import train_epoch, validate, test
-from src.correlation_gradient import get_gradient, rank_sample_information, rank_correlation_uniqueness, construct_covariance_matrix
+from src.correlation_gradient import get_gradient, rank_sample_information, rank_correlation_uniqueness, construct_correlation_matrix
 from tqdm import tqdm
 from easydict import EasyDict as edict
 import matplotlib.pyplot as plt
@@ -36,7 +36,7 @@ N_hidden = 500
 model = SingleLayerMLP(input_size=784, output_size=10, hidden_size=N_hidden).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
 grads = get_gradient(model, gradient_loader, loss, optimizer, True, flatten= True, use_label=True)
-covarinace_matrix = construct_covariance_matrix(grads)
+covarinace_matrix = construct_correlation_matrix(grads)
 u, s, v = scipy.linalg.svd(covarinace_matrix)
 eigenvalues1 = []
 eigenvalues1.append(s[:5])
@@ -64,7 +64,7 @@ N_hidden = 1000
 model = SingleLayerMLP(input_size=784, output_size=10, hidden_size=N_hidden).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
 grads = get_gradient(model, gradient_loader, loss, optimizer, True, flatten= True, use_label=True)
-covarinace_matrix = construct_covariance_matrix(grads)
+covarinace_matrix = construct_correlation_matrix(grads)
 u, s, v = scipy.linalg.svd(covarinace_matrix)
 eigenvalues2 = []
 eigenvalues2.append(s[:5])
@@ -88,7 +88,7 @@ N_hidden = 10000
 model = SingleLayerMLP(input_size=784, output_size=10, hidden_size=N_hidden).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
 grads = get_gradient(model, gradient_loader, loss, optimizer, True, flatten= True, use_label=True)
-covarinace_matrix = construct_covariance_matrix(grads)
+covarinace_matrix = construct_correlation_matrix(grads)
 u, s, v = scipy.linalg.svd(covarinace_matrix)
 eigenvalues3 = []
 eigenvalues3.append(s[:5])

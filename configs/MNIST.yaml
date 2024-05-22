@@ -4,11 +4,11 @@ data:
   num_classes: 10
 
 model:
-  hidden_size: 256
-  num_layers: 2
+  hidden_size: 128
+  num_layers: 4
 
 training:
-  learning_rate: 0.1
+  learning_rate: 0.005
   batch_size: 64
   num_epochs: 10
   validation_split: 0.5

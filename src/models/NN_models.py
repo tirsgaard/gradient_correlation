@@ -56,7 +56,7 @@ class SimpleMLP(nn.Module):
         for _ in range(num_layers - 2):
             self.layers.append(linear_relu(hidden_size, hidden_size))
         self.layers.append(nn.Linear(hidden_size, output_size))
-        self.dropout = nn.Dropout(0.0)
+        self.dropout = nn.Dropout(0.)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Flatten input
