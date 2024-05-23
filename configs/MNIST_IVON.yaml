@@ -1,0 +1,17 @@
+data:
+  dataset: MNIST
+  data_dir: data
+  num_classes: 10
+
+model:
+  hidden_size: 128
+  num_layers: 4
+
+training:
+  learning_rate: 0.01
+  batch_size: 64
+  num_epochs: 40
+  validation_split: 0.5
+
+validation:
+  batch_size: 1024

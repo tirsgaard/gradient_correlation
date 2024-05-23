@@ -393,6 +393,7 @@ def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, l
         correlation_matrix = condition_on_observations(correlation_matrix, pre_condition_index, cor_cutoff=0.8)
     # Construct new correlation matrix without indexes conditioned on
     non_condition_index = torch.tensor([i for i in range(len(x)) if i not in pre_condition_index])
+    non_condition_index = non_condition_index - len(pre_condition_index)  # Adjust indexes
     ranked_samples = rank_correlation_information_SVD(correlation_matrix,  cutoff_number)
     non_condition_index = non_condition_index[ranked_samples]
     # Combine ranked samples with pre-conditioned indexes

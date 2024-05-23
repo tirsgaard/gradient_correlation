@@ -10,7 +10,6 @@ def get_MNIST_train(device: str = "cpu") -> torchvision.datasets.MNIST:
     # Precompute the full dataset
     trainset = list(trainset)
     # Transfer to device
-    device = "cpu"
     trainset = [(x.to(device), y) for x, y in trainset]
     return trainset
 

@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 
 config = edict(yaml.safe_load(open('configs/MNIST.yaml', 'r')))
-device = torch.device("cpu") #torch.device('cuda' if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else 'cpu'))
+device = torch.device('cuda' if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else 'cpu'))
 
 torch.manual_seed(1)
 
