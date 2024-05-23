@@ -25,9 +25,9 @@ loss_batched = torch.nn.CrossEntropyLoss(reduction='none')
 # Load the data
 train_data, val_data, test_data = get_MNIST(config.training.validation_split, device=device)
 # Shuffle the train data
-train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=True)
+train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True)
+val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True)
+test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True)
 
 n_samples = torch.logspace(1, 2, 2, dtype=int).round().int()
 indexes = torch.randperm(len(train_data))
