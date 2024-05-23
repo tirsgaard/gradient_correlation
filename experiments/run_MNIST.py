@@ -70,9 +70,9 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     reduced_unsample_indexes = unsampled_indexes[:max_add_subset]
     indexed_data = torch.utils.data.Subset(train_data, sampled_indexes)
     non_indexed_data = torch.utils.data.Subset(train_data, reduced_unsample_indexes)
-    train_loader = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-    non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
-    combined_loader = torch.utils.data.DataLoader(torch.utils.data.ConcatDataset([indexed_data, non_indexed_data]), batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False)
+    non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=False)
+    combined_loader = torch.utils.data.DataLoader(torch.utils.data.ConcatDataset([indexed_data, non_indexed_data]), batch_size=config.training.batch_size, shuffle=False, pin_memory=False)
 
     # Train the model
     validation_losses = []
@@ -175,9 +175,9 @@ def run_sequence_experiment(indexes: torch.Tensor, n_samples: int, unc_sample: b
     indexed_data = torch.utils.data.Subset(train_data, indexes[:n_samples])
     max_samples = min(len(indexes), n_samples + N_max)
     non_indexed_data = torch.utils.data.Subset(train_data, indexes[:max_samples] if corr_sample else indexes[n_samples:max_samples])
-    train_loader = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False)
     if len(non_indexed_data) > 0:
-        non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
+        non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=False)
     else:
         non_train_loader = []
 
