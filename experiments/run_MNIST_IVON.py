@@ -26,9 +26,9 @@ loss_batched = torch.nn.CrossEntropyLoss(reduction='none')
 # Load the data
 train_data, val_data, test_data = get_MNIST(config.training.validation_split, device=device)
 # Shuffle the train data
-train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=True)
+train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False)
+val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False)
+test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=False)
 
 n_samples = torch.logspace(1, 2, 2, dtype=int).round().int()
 indexes = torch.randperm(len(train_data))
@@ -134,9 +134,9 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     reduced_unsample_indexes = unsampled_indexes[:max_add_subset]
     indexed_data = torch.utils.data.Subset(train_data, sampled_indexes)
     non_indexed_data = torch.utils.data.Subset(train_data, reduced_unsample_indexes)
-    train_loader = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True)
-    non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
-    combined_loader = torch.utils.data.DataLoader(torch.utils.data.ConcatDataset([indexed_data, non_indexed_data]), batch_size=config.training.batch_size, shuffle=False, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(indexed_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False)
+    non_train_loader = torch.utils.data.DataLoader(non_indexed_data, batch_size=config.training.batch_size, shuffle=False, pin_memory=False)
+    combined_loader = torch.utils.data.DataLoader(torch.utils.data.ConcatDataset([indexed_data, non_indexed_data]), batch_size=config.training.batch_size, shuffle=False, pin_memory=False)
 
     # Train the model
     validation_losses = []
@@ -184,7 +184,7 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     
     def run_sampling_experiment(data_rankings, n_samples, model, loss):
         data = indexed_data + torch.utils.data.Subset(train_data, data_rankings[:n_samples])
-        train_data_loader = torch.utils.data.DataLoader(data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True, ) 
+        train_data_loader = torch.utils.data.DataLoader(data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False, ) 
         current_optimizer = ivon.IVON(model.parameters(), lr=config.training.learning_rate, ess=len(data))
         results_epoch = []
         validation_res = []
