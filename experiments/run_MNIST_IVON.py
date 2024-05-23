@@ -173,7 +173,7 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     
     # QBC sampling
     most_decor_points = QBC_rank_datapoints(non_train_loader, best_model, best_optimizer, loss, test_samples=10)
-    QBC_ranking = reduced_unsample_indexes[most_decor_points]
+    QBC_ranking = reduced_unsample_indexes[most_decor_points.cpu()]
     
     # Gradient correlation sampling with correlation to training data gradient
     most_decor_points, cov = rank_uncertainty_information(non_train_loader, best_model, loss_batched, best_optimizer, unc, pre_condition_index=torch.tensor([], dtype=int), cutoff_number=100)
