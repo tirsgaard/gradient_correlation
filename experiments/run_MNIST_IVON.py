@@ -98,9 +98,9 @@ def QBC_rank_datapoints(data_loader: torch.utils.data.DataLoader, model: torch.n
     model.eval()
     QBC_scores = []
     for x, y in data_loader:
+        x, y = x.to(device), y.to(device)
         sampled_probs = []
         for i in range(test_samples):
-            x, y = x.to(device), y.to(device)
             with optimizer.sampled_params():
                 sampled_logit = model(x)
                 sampled_probs.append(F.softmax(sampled_logit, dim=1))
@@ -110,7 +110,7 @@ def QBC_rank_datapoints(data_loader: torch.utils.data.DataLoader, model: torch.n
     QBC_scores = torch.cat(QBC_scores, 0)
         
     # Find most uncertain points
-    most_unc_points = QBC_scores.sort().indices
+    most_unc_points = reversed(QBC_scores.sort().indices)
     return most_unc_points
     
     
@@ -173,7 +173,7 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     
     # QBC sampling
     most_decor_points = QBC_rank_datapoints(non_train_loader, best_model, best_optimizer, loss, test_samples=10)
-    QBC_ranking = reduced_unsample_indexes[most_decor_points]
+    QBC_ranking = reduced_unsample_indexes[most_decor_points.cpu()]
     
     # Gradient correlation sampling with correlation to training data gradient
     most_decor_points, cov = rank_uncertainty_information(non_train_loader, best_model, loss_batched, best_optimizer, unc, pre_condition_index=torch.tensor([], dtype=int), cutoff_number=100)
@@ -220,7 +220,7 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     return random_sampling_results, uncertainty_sampling_results, IVON_uncertainty_results, QBC_results, gradient_covariance_unique_results
 
 n_start_data = 1000
-n_rep = 10
+n_rep = 3
 results = []
 for i in tqdm(range(n_rep), desc='Running Repetitions'):
     indexes = torch.randperm(len(train_data))
