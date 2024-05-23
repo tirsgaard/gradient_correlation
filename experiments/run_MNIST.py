@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 
 config = edict(yaml.safe_load(open('configs/MNIST.yaml', 'r')))
-device = "mps"#torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 torch.manual_seed(1)
 model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
@@ -25,9 +25,9 @@ loss_batched = torch.nn.CrossEntropyLoss(reduction='none')
 # Load the data
 train_data, val_data, test_data = get_MNIST(config.training.validation_split, device=device)
 # Shuffle the train data
-train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True)
-val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True)
-test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True)
+train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False)
+val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False)
+test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=False)
 
 n_samples = torch.logspace(1, 2, 2, dtype=int).round().int()
 indexes = torch.randperm(len(train_data))
