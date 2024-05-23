@@ -169,7 +169,7 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     
     # IVON uncertainty sampling
     most_decor_points, _ = uncertainty_IVON_rank_datapoints(non_train_loader, best_model, best_optimizer, loss, test_samples=100)
-    IVON_uncertainty_sampling_ranking = reduced_unsample_indexes[most_decor_points]
+    IVON_uncertainty_sampling_ranking = reduced_unsample_indexes[most_decor_points.cpu()]
     
     # QBC sampling
     most_decor_points = QBC_rank_datapoints(non_train_loader, best_model, best_optimizer, loss, test_samples=10)
@@ -177,7 +177,7 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     
     # Gradient correlation sampling with correlation to training data gradient
     most_decor_points, cov = rank_uncertainty_information(non_train_loader, best_model, loss_batched, best_optimizer, unc, pre_condition_index=torch.tensor([], dtype=int), cutoff_number=100)
-    gradient_covariance_unique = reduced_unsample_indexes[most_decor_points]
+    gradient_covariance_unique = reduced_unsample_indexes[most_decor_points.cpu()]
     
     # Reset the model
     model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
