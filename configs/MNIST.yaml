@@ -6,6 +6,7 @@ data:
 model:
   hidden_size: 128
   num_layers: 4
+  num_parallel: 1
 
 training:
   learning_rate: 0.005

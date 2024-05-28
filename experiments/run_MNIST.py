@@ -2,12 +2,12 @@ from typing import Iterable
 import torch
 import torchvision
 import scipy
-from src.models.NN_models import SimpleMLP, SingleLayerMLP
+from src.models.NN_models import SimpleMLP, SingleLayerMLP, Parallel_MLP
 import yaml
 from datasets.download_MNIST import get_MNIST
-from src.training import train_epoch, validate, test
+from src.training import train_epoch, validate, test, validate_parallel
 from src.correlation_gradient import rank_sample_information, rank_correlation_uniqueness, rank_uncertainty_information
-from src.utility import JS_div
+from src.utility import JS_div, cross_entropy_parallel
 from tqdm import tqdm
 from easydict import EasyDict as edict
 import matplotlib.pyplot as plt
@@ -20,6 +20,7 @@ torch.manual_seed(1)
 model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
 loss = torch.nn.CrossEntropyLoss() #lambda x, y: 0.5*(x-y).pow(2).sum(-1).mean()  # 
+cross_entropy_parallel = cross_entropy_parallel
 loss_batched = torch.nn.CrossEntropyLoss(reduction='none')
 
 # Load the data
@@ -80,7 +81,7 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     best_model = None
     best_accuracy = 0
     
-    for epoch in tqdm(range(config.training.num_epochs)):
+    for epoch in range(config.training.num_epochs):
         # Validate model
         val_loss, val_accuracy = validate(model, loss, val_loader, device)
         validation_losses.append(val_loss)
@@ -115,7 +116,7 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     gradient_covariance_unique = reduced_unsample_indexes[most_decor_points]
     
     # Reset the model
-    model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
+    model = Parallel_MLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers, num_parallel=config.model.num_parallel).to(device)
     
     def run_sampling_experiment(data_rankings, n_samples, model, loss):
         data = indexed_data + torch.utils.data.Subset(train_data, data_rankings[:n_samples])
@@ -125,8 +126,8 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         validation_res = []
         for epoch in range(config.training.num_epochs):
             for j in range(10):
-                train_epoch(model, current_optimizer, loss, train_data_loader, device)
-            validation_res.append(validate(model, loss, val_loader, device))
+                train_epoch(model, current_optimizer, cross_entropy_parallel, train_data_loader, device)
+            validation_res.append(validate_parallel(model, cross_entropy_parallel, val_loader, device))
         best_epoch = max(validation_res, key=lambda x: x[1])
         results_epoch.append(best_epoch)
         return list(zip(*results_epoch))

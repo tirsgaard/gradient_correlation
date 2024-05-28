@@ -17,6 +17,14 @@ def average_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
         total_loss += loss(y_pred.float(), torch.tensor([i], dtype=torch.long).repeat(y_pred.shape[0])) * y_pred.softmax(-1)[:, i]
     return total_loss
 
+def direct_gradient(y_pred: torch.Tensor, *args) -> torch.Tensor:
+    total_loss = 0.
+    B = y_pred.shape[0]
+    n_classes = y_pred.shape[-1]
+    total_loss = (y_pred-1.001*y_pred).float().sum(-1)
+    total_loss = total_loss / n_classes**0.5
+    return total_loss
+
 def pkernel_loss(y_pred: torch.Tensor, loss: torch.nn.Module) -> torch.Tensor:
     total_loss = 0.
     B = y_pred.shape[0]
@@ -33,7 +41,7 @@ def svd_pseudo_inverse(matrix: torch.Tensor, k: int) -> torch.Tensor:
     s_inv[k:] = 0
     return v @ torch.diag(s_inv) @ u.T
 
-def get_gradient(model: torch.nn.Module, x: torch.Tensor, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, flatten: bool = False, use_label: bool = False, y: Optional[torch.Tensor] = None, pKernel: bool=False) -> torch.Tensor:
+def get_gradient(model: torch.nn.Module, x: torch.Tensor, loss_fn: callable, opt: torch.optim.Optimizer, positive: bool = True, flatten: bool = False, use_label: bool = False, y: Optional[torch.Tensor] = None, kernel: str = "pKernel") -> torch.Tensor:
     """
     Get the gradient of each element of the batch in x of the model with respect to the loss function
     
@@ -45,6 +53,7 @@ def get_gradient(model: torch.nn.Module, x: torch.Tensor, loss_fn: callable, opt
         opt: the optimizer to use
         positive: whether to perturb the loss function positively or negatively
         flatten: whether to flatten the gradient
+        kernel: What type of kernel to use, can either be pKernel, direct or average
         
     Returns:
         grads: the gradients of the model with respect to the loss function
@@ -63,10 +72,14 @@ def get_gradient(model: torch.nn.Module, x: torch.Tensor, loss_fn: callable, opt
         y_target = torch.zeros_like(y_pred).scatter(1, y_target.unsqueeze(1), 1)
        
     # get one-hot encoding of y_target
-    if pKernel:
+    if kernel == "pKernel":
         loss = pkernel_loss(y_pred, loss_fn)
+    elif kernel == "direct":
+        loss = direct_gradient(y_pred, y_target)
+    elif kernel == "average":
+        loss = average_loss(y_pred, loss_fn)
     else:
-        loss = loss_fn(y_pred, y_target)
+        raise ValueError("Invalid kernel")
     grads = torch.autograd.grad(loss, model.parameters(), is_grads_batched=True, grad_outputs=torch.eye(B).to(device))
     if flatten:
         grads = torch.cat([grad.view((B, -1)) for grad in grads], -1)
@@ -120,6 +133,17 @@ def construct_correlation_matrix(grads: torch.Tensor) -> torch.Tensor:
     normalised_gradients[normalised_gradients.isnan()] = 0
     normalised_gradients = normalised_gradients/(torch.norm(normalised_gradients, dim=-1)[..., None]/(normalised_gradients.shape[-1]**0.5))
     correlation_matrix = torch.matmul(normalised_gradients, normalised_gradients.T)/normalised_gradients.shape[-1]
+    return correlation_matrix
+
+def construct_covariance_matrix(grads: torch.Tensor) -> torch.Tensor:
+    """ Construct the correlation matrix from the gradients
+    Args:
+        grads: the gradients to use [batch_size, n_params]
+        
+    Returns:
+        correlation_matrix: the correlation matrix [n_params, n_params]
+    """
+    correlation_matrix = torch.matmul(grads, grads.T)
     return correlation_matrix
 
 
@@ -387,7 +411,7 @@ def rank_sample_information(x: Iterable[torch.Tensor], model: torch.nn.Module, l
     # Compile x into a single tensor
     x = torch.cat([xs for xs, _ in x], 0)
     
-    grads = get_gradient(model, x, loss_fn, opt, positive, flatten= True, pKernel=True)
+    grads = get_gradient(model, x, loss_fn, opt, positive, flatten= True, kernel="pKernel")
     correlation_matrix = construct_correlation_matrix(grads)    
     if len(pre_condition_index) > 0:
         correlation_matrix = condition_on_observations(correlation_matrix, pre_condition_index, cor_cutoff=0.8)
@@ -416,9 +440,9 @@ def rank_uncertainty_information(x: Iterable[torch.Tensor], model: torch.nn.Modu
     # Compile x into a single tensor
     x = torch.cat([xs for xs, _ in x], 0)
     
-    grads = get_gradient(model, x, loss_fn, opt, positive, flatten=True, pKernel=False)
-    covariance_matrix = construct_correlation_matrix(grads)
-    covariance_matrix = covariance_matrix * ((1-unc)[:, None] * (1-unc)[None, :])
+    grads = get_gradient(model, x, loss_fn, opt, positive, flatten=True, kernel="pKernel")
+    covariance_matrix = construct_covariance_matrix(grads)
+    covariance_matrix = covariance_matrix  #* ((1-unc)[:, None] * (1-unc)[None, :])
     # Set anything but diagonal to zero
     #covariance_matrix = torch.diag(covariance_matrix.diag()*)
     if len(pre_condition_index) > 0:

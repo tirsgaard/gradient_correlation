@@ -25,6 +25,7 @@ class GaussianFit(torch.nn.Module):
     def __init__(self, model: torch.nn.Module):
         super(GaussianFit, self).__init__()
         self.model = model
+        self.covariance_matrix = None
         
     def fit(self, data: Iterable[torch.Tensor]):
         xs, ys, y_hats = [], [], []
@@ -39,10 +40,10 @@ class GaussianFit(torch.nn.Module):
         label_diff = y - y_hat
         self.grads = get_gradient(self.model, xs, loss_batched, optimizer, True, True, y=y, pKernel=True)
         #self.grads = self.grads - self.grads.mean(-1, keepdim=True)
-        covarinace_matrix = self.grads@self.grads.T
-        covarinace_matrix = covarinace_matrix
+        self.covarinace_matrix = self.grads@self.grads.T
+        self.covarinace_matrix = self.covarinace_matrix
         #self.W = torch.linalg.solve(covarinace_matrix.cpu(), label_diff.cpu()).to(device)
-        self.W = svd_pseudo_inverse(covarinace_matrix, 100) @ label_diff
+        self.W = svd_pseudo_inverse(self.covarinace_matrix, 100) @ label_diff
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_grad = get_gradient(self.model, x, loss_batched, optimizer, True, True, pKernel=True)

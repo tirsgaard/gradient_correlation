@@ -147,3 +147,49 @@ class CNN(nn.Module):
         for layer in self.layers:
             x = layer(x)
         return x
+    
+    
+class linear_relu_parallel(nn.Module):
+    def __init__(self, in_features: int, out_features: int, num_parallel: int, bias: bool = True):
+        super(linear_relu_parallel, self).__init__()
+        self.w1 = torch.nn.Parameter(torch.randn(num_parallel, in_features, out_features))
+        self.w1 = torch.nn.init.kaiming_uniform_(self.w1)
+        self.b1 = torch.nn.Parameter(torch.randn(num_parallel, out_features))
+        self.b1.data = torch.nn.init.uniform_(self.b1.data, -1, 1)
+        self.relu = nn.ReLU()
+        
+    def forward(self, x):
+        x = x[:, None, :]
+        x = self.relu(torch.einsum('ijk,nij->nik', self.w1, x) + self.b1)
+        return x  # Shape (batch_size, num_parallel, out_features)
+    
+class Parallel_MLP(nn.Module):
+    def __init__(self, input_size: int, output_size: int, hidden_size: int, num_layers: int = 4, num_parallel: int = 4):
+        """ A parallel multi-layer perceptron.
+        Args:
+            input_size: The input size of the model
+            output_size: The output size of the model
+            hidden_size: The hidden size of the model
+            num_layers: The number of layers in the model
+            num_parallel: The number of parallel models to contain. This ultimately results in a ensemble model.
+        """
+        super(Parallel_MLP, self).__init__()
+        self.input_size = input_size
+        self.output_size = output_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.num_parallel = num_parallel
+        self.layers = nn.ModuleList()
+        self.layers.append(linear_relu_parallel(input_size, hidden_size, num_parallel))
+        for _ in range(num_layers - 2):
+            self.layers.append(linear_relu(hidden_size, hidden_size, num_parallel))
+        self.layers.append(nn.Linear(hidden_size, output_size, num_parallel))
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.view(-1, self.input_size)
+        for layer in self.layers[:-1]:
+            x = layer(x)
+        x = self.layers[-1](x)
+        return x
+        
+        
