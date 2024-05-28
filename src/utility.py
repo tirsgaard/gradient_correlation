@@ -32,5 +32,10 @@ def cross_entropy_parallel(y_hat: torch.Tensor, y_target: torch.Tensor) -> torch
     n = y_hat.size(-2)
     # clone y_target n times
     y_target = y_target.unsqueeze(-2).expand_as(y_hat)
-    return torch.nn.functional.cross_entropy(y_hat, y_target, reduction='none').mean(-1).mean(-1)
+    # Vectorize parallel and batch dimensions
+    y_hat = y_hat.view(-1, y_hat.size(-1))
+    y_target = y_target.reshape(-1, y_target.size(-1))
+    # Compute the cross entropy
+    CE = torch.nn.functional.cross_entropy(y_hat, y_target, reduction='none')
+    return CE.mean(-1)
     
