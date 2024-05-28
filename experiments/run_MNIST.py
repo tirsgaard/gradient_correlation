@@ -120,7 +120,7 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
     
     def run_sampling_experiment(data_rankings, n_samples, model, loss):
         data = indexed_data + torch.utils.data.Subset(train_data, data_rankings[:n_samples])
-        train_data_loader = torch.utils.data.DataLoader(data, batch_size=config.training.batch_size, shuffle=True, pin_memory=True, ) 
+        train_data_loader = torch.utils.data.DataLoader(data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False) 
         current_optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
         results_epoch = []
         validation_res = []
