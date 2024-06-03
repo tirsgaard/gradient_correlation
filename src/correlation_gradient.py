@@ -443,7 +443,7 @@ def rank_uncertainty_information(x: Iterable[torch.Tensor], model: torch.nn.Modu
     grads = get_gradient(model, x, loss_fn, opt, positive, flatten=True, kernel="pKernel")
     covariance_matrix = construct_covariance_matrix(grads)
     #covariance_matrix = covariance_matrix  #* ((1-unc)[:, None] * (1-unc)[None, :])
-    covariance_matrix = covariance_matrix + covariance_matrix.diag().mean()*torch.eye(covariance_matrix.shape[0])
+    covariance_matrix = covariance_matrix + covariance_matrix.diag().mean()*torch.eye(covariance_matrix.shape[0], device=covariance_matrix.device)
     # Set anything but diagonal to zero
     #covariance_matrix = torch.diag(covariance_matrix.diag()*)
     if len(pre_condition_index) > 0:
