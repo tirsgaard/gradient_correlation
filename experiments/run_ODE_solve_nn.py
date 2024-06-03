@@ -7,6 +7,7 @@ import yaml
 from datasets.download_MNIST import get_MNIST
 from src.training import train_epoch, validate, test
 from src.correlation_gradient import get_gradient, rank_sample_information, rank_correlation_uniqueness, construct_correlation_matrix
+from src.NTK import GaussianFit
 from tqdm import tqdm
 from easydict import EasyDict as edict
 import matplotlib.pyplot as plt
@@ -15,43 +16,7 @@ from torch.utils.data.dataloader import default_collate
 
 import numpy as np
 
-def svd_pseudo_inverse(matrix: torch.Tensor, k: int) -> torch.Tensor:
-    u, s, v = torch.svd(matrix)
-    s_inv = 1/s
-    s_inv[k:] = 0
-    return v @ torch.diag(s_inv) @ u.T
 
-class GaussianFit(torch.nn.Module):
-    def __init__(self, model: torch.nn.Module):
-        super(GaussianFit, self).__init__()
-        self.model = model
-        self.covariance_matrix = None
-        
-    def fit(self, data: Iterable[torch.Tensor]):
-        xs, ys, y_hats = [], [], []
-        with torch.no_grad():
-            for x, y in data:
-                xs.append(x)
-                ys.append(y)
-                y_hats.append(torch.softmax(self.model(x.to(device)), -1))
-        xs = torch.cat(xs, 0).to(device)
-        y = torch.cat(ys, 0).to(device)
-        y_hat = torch.cat(y_hats, 0).to(device)
-        label_diff = y - y_hat
-        self.grads = get_gradient(self.model, xs, loss_batched, optimizer, True, True, y=y, pKernel=True)
-        #self.grads = self.grads - self.grads.mean(-1, keepdim=True)
-        self.covarinace_matrix = self.grads@self.grads.T
-        self.covarinace_matrix = self.covarinace_matrix
-        #self.W = torch.linalg.solve(covarinace_matrix.cpu(), label_diff.cpu()).to(device)
-        self.W = svd_pseudo_inverse(self.covarinace_matrix, 100) @ label_diff
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x_grad = get_gradient(self.model, x, loss_batched, optimizer, True, True, pKernel=True)
-        #x_grad = x_grad - x_grad.mean(-1, keepdim=True)
-        K_xX = x_grad@self.grads.T
-        with torch.no_grad():
-            y_hat = torch.softmax(self.model(x), -1)
-        return y_hat + K_xX @ self.W
     
 def MSELoss(y_hat, y):
     return 0.5*(y_hat-y).pow(2).sum(-1).mean()
@@ -102,8 +67,8 @@ if __name__ == '__main__':
     validation_acc_list = []
     validation_kernel_acc_list = []
     for j in tqdm(range(epochs)): 
-        kernel_model = GaussianFit(model)
-        kernel_model.fit(gradient_loader)
+        kernel_model = GaussianFit(model, device)
+        kernel_model.fit(gradient_loader, optimizer, loss_batched)
         validation_kernel_acc_list.append(validate_model(kernel_model, val_loader))
         validation_acc_list.append(validate_model(model, val_loader))
         model.train()
@@ -128,8 +93,8 @@ if __name__ == '__main__':
     validation_acc_list = []
     validation_kernel_acc_list = []
     for j in tqdm(range(epochs)):
-        kernel_model = GaussianFit(model)
-        kernel_model.fit(gradient_loader)
+        kernel_model = GaussianFit(model, device)
+        kernel_model.fit(gradient_loader, optimizer, loss_batched)
         validation_kernel_acc_list.append(validate_model(kernel_model, val_loader))
         validation_acc_list.append(validate_model(model, val_loader))
         model.train()

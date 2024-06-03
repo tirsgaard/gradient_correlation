@@ -111,8 +111,6 @@ class SingleLayerMLP(nn.Module):
         for layer in self.layers:
             if isinstance(layer, own_linear_layer):
                 layer.reset_parameters()
-                
-        
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Flatten input
@@ -122,6 +120,26 @@ class SingleLayerMLP(nn.Module):
         for layer in self.layers:
             x = layer(x)
         return x
+    
+    def get_weights(self):
+        return [layer.weight for layer in self.layers if isinstance(layer, own_linear_layer)]
+    
+    def get_biases(self):
+        return [layer.bias for layer in self.layers if isinstance(layer, own_linear_layer)]
+    
+    def set_weights(self, weights, biases, initial_gain):
+        i = 0
+        for layer in self.layers:
+            if isinstance(layer, own_linear_layer):
+                weight = weights[i]
+                bias = biases[i]
+                in_features = layer.in_features
+                out_features = layer.out_features
+                k_factor = initial_gain #in_features/weight.shape[1])**0.5
+                layer.weight.data = weight.data[:out_features, :in_features]*k_factor
+                layer.bias.data = bias.data[:out_features]*k_factor
+                i += 1
+    
     
 class CNN(nn.Module):
     """ A simple convolutional neural network for CIFAR100 classification """

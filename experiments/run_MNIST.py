@@ -208,7 +208,7 @@ def run_sequence_experiment(indexes: torch.Tensor, n_samples: int, unc_sample: b
     return validation_losses, validation_accuracies
 
 n_start_data = 1000
-n_rep = 2
+n_rep = 10
 results = []
 for i in tqdm(range(n_rep), desc='Running Repetitions'):
     indexes = torch.randperm(len(train_data))

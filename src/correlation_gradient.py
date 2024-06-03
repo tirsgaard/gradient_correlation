@@ -21,7 +21,7 @@ def direct_gradient(y_pred: torch.Tensor, *args) -> torch.Tensor:
     total_loss = 0.
     B = y_pred.shape[0]
     n_classes = y_pred.shape[-1]
-    total_loss = (y_pred-1.001*y_pred).float().sum(-1)
+    total_loss = (1.001*y_pred-y_pred).float().sum(-1)
     total_loss = total_loss / n_classes**0.5
     return total_loss
 
@@ -442,7 +442,8 @@ def rank_uncertainty_information(x: Iterable[torch.Tensor], model: torch.nn.Modu
     
     grads = get_gradient(model, x, loss_fn, opt, positive, flatten=True, kernel="pKernel")
     covariance_matrix = construct_covariance_matrix(grads)
-    covariance_matrix = covariance_matrix  #* ((1-unc)[:, None] * (1-unc)[None, :])
+    #covariance_matrix = covariance_matrix  #* ((1-unc)[:, None] * (1-unc)[None, :])
+    covariance_matrix = covariance_matrix + covariance_matrix.diag().mean()*torch.eye(covariance_matrix.shape[0])
     # Set anything but diagonal to zero
     #covariance_matrix = torch.diag(covariance_matrix.diag()*)
     if len(pre_condition_index) > 0:
@@ -484,3 +485,4 @@ def rank_pca_information(x: Iterable[torch.Tensor], model: torch.nn.Module, loss
     min_distances = distances[range(len(x_pca)), distances.argmin(axis=1)]
     ranked_samples = min_distances.argsort()[::-1].copy()
     return ranked_samples
+
