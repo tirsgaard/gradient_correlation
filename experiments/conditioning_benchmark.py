@@ -224,6 +224,13 @@ def run_experiment(n_datapoints: int, n_parameters: int, n_layers: int, batch_si
     covariance_matrix = construct_covariance_matrix(grads)
     print("Condition number of covariance matrix:", torch.linalg.cond(covariance_matrix))
     
+    # Warmup
+    print("Warmup")
+    with torch.no_grad():
+        for method in conditioning_methods:
+            ranked_samples = rank_covariance_information(covariance_matrix, method, cutoff_number)
+    
+    # Run the experiment
     rankings = []
     timings = []
     with torch.no_grad():
@@ -257,8 +264,8 @@ if __name__ == '__main__':
     if do_exp:
         timings, rankings = run_experiment(n_datapoints, n_parameters, n_layers, batch_size, device, conditioning_methods, cutoff_number)
         # save timings and rankings
-        torch.save(timings, "timings.pt")
-        torch.save(rankings, "rankings.pt")
+        torch.save(timings.cpu(), "timings.pt")
+        torch.save(rankings.cpu(), "rankings.pt")
     else:
         timings = torch.load("timings.pt")
         rankings = torch.load("rankings.pt")
@@ -284,6 +291,7 @@ if __name__ == '__main__':
     ax.set_xlabel("Sample index")
     ax.set_ylabel("Mean agreement")
     plt.legend()
+    plt.savefig("agreement_matrix_inversions.png")
     plt.show()
     
     
