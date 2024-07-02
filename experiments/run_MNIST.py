@@ -51,9 +51,10 @@ def uncertainty_rank_datapoints(data_loader: torch.utils.data.DataLoader, model:
     return most_unc_points, y_hat.softmax(-1).max(-1)[0]
     
     
-def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torch.Tensor, n_additional_samples: Iterable, max_add_subset: int = 1000) -> tuple[list[float], list[float], list[float]]:
+def run_single_experiment(methods_to_use: dict[callable], sampled_indexes: torch.Tensor, unsampled_indexes: torch.Tensor, n_additional_samples: Iterable, max_add_subset: int = 1000) -> tuple[list[float], list[float], list[float]]:
     """ Run an active learning experiment. 
     Args:
+        methods_to_use: the methods to use for sampling
         sampled_indexes: the indexes to use for training
         unsampled_indexes: the indexes to select new datapoints from
         n_additional_samples: the number of samples to try to add to the training set
@@ -96,27 +97,31 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
             train_epoch(model, optimizer, loss, train_loader, device)
     print(f"Best Validation Accuracy: {best_accuracy} at epoch {validation_accuracies.index(best_accuracy)}")
     
+    rankings = {}
     # Get rankings for different sampling strategies
-    passive_sampling_ranking = reduced_unsample_indexes[torch.randperm(len(reduced_unsample_indexes))]
+    if methods_to_use.get('Random') is not None:
+        rankings["Random"] = reduced_unsample_indexes[torch.randperm(len(reduced_unsample_indexes))]
     
     # Uncertainty sampling
-    most_unc_points, unc = uncertainty_rank_datapoints(non_train_loader, best_model)
-    uncertainty_sampling_ranking = reduced_unsample_indexes[most_unc_points.cpu()]
+    if methods_to_use.get('Uncertainty') is not None:
+        most_unc_points, unc = uncertainty_rank_datapoints(non_train_loader, best_model)
+        rankings["Uncertainty"] = reduced_unsample_indexes[most_unc_points.cpu()]
     
     # Gradient correlation sampling
-    most_decor_points = rank_sample_information(non_train_loader, best_model, loss_batched, optimizer, pre_condition_index=torch.tensor([], dtype=int), cutoff_number=100)
-    gradient_correlation_ranking = reduced_unsample_indexes[most_decor_points]
+    if methods_to_use.get('Correlation') is not None:
+        most_decor_points = rank_sample_information(non_train_loader, best_model, loss_batched, optimizer, pre_condition_index=torch.tensor([], dtype=int), cutoff_number=100)
+        rankings["Correlation"] = reduced_unsample_indexes[most_decor_points]
     
     # Gradient correlation sampling with conditioning on training data
-    most_decor_points = rank_sample_information(combined_loader, best_model, loss_batched, optimizer, pre_condition_index=torch.tensor(range(len(indexed_data)), dtype=int), cutoff_number=100)
-    gradient_correlation_cond_ranking = reduced_unsample_indexes[most_decor_points]
+    if methods_to_use.get('Correlation with Condition') is not None:
+        most_decor_points = rank_sample_information(combined_loader, best_model, loss_batched, optimizer, pre_condition_index=torch.tensor(range(len(indexed_data)), dtype=int), cutoff_number=100)
+        rankings["Correlation with Condition"] = reduced_unsample_indexes[most_decor_points]
     
     # Gradient correlation sampling with correlation to training data gradient
-    most_decor_points, cov = rank_uncertainty_information(non_train_loader, best_model, loss_batched, optimizer, unc, pre_condition_index=torch.tensor([], dtype=int), cutoff_number=100)
-    gradient_covariance_unique = reduced_unsample_indexes[most_decor_points]
-    
-    rankings = [passive_sampling_ranking, uncertainty_sampling_ranking, gradient_correlation_ranking, gradient_correlation_cond_ranking, gradient_covariance_unique]
-    
+    if methods_to_use.get('Covariance') is not None:
+        most_decor_points, cov = rank_uncertainty_information(non_train_loader, best_model, loss_batched, optimizer, unc, pre_condition_index=torch.tensor([], dtype=int), cutoff_number=100)
+        rankings["Covariance"] = reduced_unsample_indexes[most_decor_points]
+        
     # Reset the model
     model = Parallel_MLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers, num_parallel=config.model.num_parallel).to(device)
     
@@ -134,42 +139,46 @@ def run_single_experiment(sampled_indexes: torch.Tensor, unsampled_indexes: torc
         results_epoch.append(best_epoch)
         return list(zip(*results_epoch))
         
-    results = []
-    for n_samples in n_additional_samples:
-        results.append([run_sampling_experiment(data_rankings, n_samples, deepcopy(model), loss) for data_rankings in rankings])
+    results = {}
+    for method, data_rankings in rankings.items():
+        results[method] = [run_sampling_experiment(data_rankings, n_samples, deepcopy(model), loss) for n_samples in n_samples]
     return results
 
-n_start_data = 1000
-n_rep = 2
+n_start_data = 100
+n_rep = 10
 run_experiments = True
+
+methods_to_use = {"Random": uncertainty_rank_datapoints,
+                  "Uncertainty": rank_sample_information,
+                  #"Correlation": rank_correlation_uniqueness,
+                  #"Correlation with Condition": rank_sample_information,
+                  "Covariance": rank_uncertainty_information}
 
 if run_experiments:
     results = []
     for i in tqdm(range(n_rep), desc='Running Repetitions'):
         indexes = torch.randperm(len(train_data))
-        results.append(run_single_experiment(indexes[:n_start_data], indexes[n_start_data:], n_samples, max_add_subset=10**3))
+        results.append(run_single_experiment(methods_to_use, indexes[:n_start_data], indexes[n_start_data:], n_samples, max_add_subset=10**3))
         
-    result_array = torch.tensor(results)  # (n_rep, n_samples, n_sampling_strategies, 2, 2)
-    torch.save(result_array, 'MNIST_results.pt')
+    results_dict = {}
+    for i, method in enumerate(methods_to_use.keys()):
+        results_dict[method] = torch.stack([torch.tensor([results[j][method][i] for j in range(n_rep)]) for i in range(len(n_samples))])
+    torch.save(results_dict, 'MNIST_results.pt')
 else:
-    result_array = torch.load('MNIST_results.pt')
+    results_dict = torch.load('MNIST_results.pt')
 
-sample_validation_losses = result_array[:, :, 0,  0, :]
-sample_validation_accuracy = result_array[:, :, 0, 1, :]
-sample_validation_unc_losses = result_array[:, :, 1, 0, :]
-sample_validation_unc_accuracy = result_array[:, :, 1, 1, :]
-sample_validation_corr_losses = result_array[:, :, 2, 0, :]
-sample_validation_corr_accuracy = result_array[:, :, 2, 1, :]
-sample_validation_corr_cond_losses = result_array[:, :, 3, 0, :]
-sample_validation_corr_cond_accuracy = result_array[:, :, 3, 1, :]
-sample_validation_cov_losses = result_array[:, :, 4, 0, :]
-sample_validation_cov_accuracy = result_array[:, :, 4, 1, :]
+sample_validation_losses = {}
+sample_validation_accuracy = {}
+
+for method in methods_to_use.keys():
+    sample_validation_losses[method] = results_dict[method][:, :, 0, 0].permute((1,0))
+    sample_validation_accuracy[method] = results_dict[method][:, :, 1, 0].permute((1,0))
 
 # Plot the validation loss and accuracy as a function of the number of samples
 fig, axs = plt.subplots(2)
 for i, n in enumerate(n_samples):
-    axs[0].plot(sample_validation_losses[i], label=f'{n} samples')
-    axs[1].plot(sample_validation_accuracy[i], label=f'{n} samples')
+    axs[0].plot(sample_validation_losses["Random"][i], label=f'{n} samples')
+    axs[1].plot(sample_validation_accuracy["Random"][i], label=f'{n} samples')
 axs[0].set_title('Validation Loss')
 axs[0].set_xlabel('Epoch')
 axs[0].set_ylabel('Loss')
@@ -193,22 +202,15 @@ def generate_uncertainty_curve(ax, data_sample, label, color, significance_level
     ax.fill_between(n_samples, mean - lines, mean + lines, color=color, alpha=0.2)
 
 fig, axs = plt.subplots(2)
-generate_uncertainty_curve(axs[0], sample_validation_losses[..., -1], 'PL', 'red')
-generate_uncertainty_curve(axs[0], sample_validation_unc_losses[..., -1], 'unc', 'green')
-generate_uncertainty_curve(axs[0], sample_validation_corr_losses[..., -1], 'corr', 'blue')
-generate_uncertainty_curve(axs[0], sample_validation_corr_cond_losses[..., -1], 'corr cond', 'purple')
-generate_uncertainty_curve(axs[0], sample_validation_cov_losses[..., -1], 'cov', 'orange')
+colors = ["red", "green", "blue", "orange", "purple", "black", "yellow"]
+for i, method in enumerate(methods_to_use.keys()):
+    generate_uncertainty_curve(axs[0], sample_validation_losses[method], method, colors[i])
+    generate_uncertainty_curve(axs[1], sample_validation_accuracy[method], method, colors[i])
 axs[0].set_title('Final Loss')
 axs[0].set_xlabel('Number of Samples')
 axs[0].set_ylabel('Loss')
 axs[0].set_xscale('log')
 axs[0].legend()
-
-generate_uncertainty_curve(axs[1], sample_validation_accuracy[..., -1], 'Accuracy PL', 'red')
-generate_uncertainty_curve(axs[1], sample_validation_unc_accuracy[..., -1], 'Accuracy unc', 'green')
-generate_uncertainty_curve(axs[1], sample_validation_corr_accuracy[..., -1], 'Accuracy corr', 'blue')
-generate_uncertainty_curve(axs[1], sample_validation_corr_cond_accuracy[..., -1], 'Accuracy corr cond', 'purple')
-generate_uncertainty_curve(axs[1], sample_validation_cov_accuracy[..., -1], 'Accuracy cov', 'orange')
 
 axs[1].set_title('Final Accuracy')
 axs[1].set_xlabel('Number of Samples')
@@ -221,11 +223,8 @@ plt.show()
 
 ### Compare difference
 fig, axs = plt.subplots()
-generate_uncertainty_curve(axs, (sample_validation_unc_accuracy - sample_validation_accuracy)[..., -1], 'Uncertainty', 'green')
-generate_uncertainty_curve(axs, (sample_validation_corr_accuracy - sample_validation_accuracy)[..., -1], 'Correlation', 'blue')
-generate_uncertainty_curve(axs, (sample_validation_corr_cond_accuracy - sample_validation_accuracy)[..., -1], 'Correlation with Condition', 'purple')
-generate_uncertainty_curve(axs, (sample_validation_cov_accuracy - sample_validation_accuracy)[..., -1], 'Covariance', 'orange')
-
+for i, method in enumerate(methods_to_use.keys()):
+    generate_uncertainty_curve(axs, sample_validation_accuracy[method] - sample_validation_accuracy['Random'], method, colors[i])
 axs.set_title('Final Accuracy')
 axs.set_xlabel('Number of Samples')
 axs.set_ylabel('Accuracy Difference from PL')
