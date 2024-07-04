@@ -30,7 +30,7 @@ train_loader = torch.utils.data.DataLoader(train_data, batch_size=config.trainin
 val_loader = torch.utils.data.DataLoader(val_data, batch_size=config.training.batch_size, shuffle=True, pin_memory=False)
 test_loader = torch.utils.data.DataLoader(test_data, batch_size=config.validation.batch_size, shuffle=True, pin_memory=False)
 
-n_samples = torch.logspace(1, 2, 2, dtype=int).round().int()
+n_samples = torch.logspace(0, 2, 3, dtype=int).round().int()
 indexes = torch.randperm(len(train_data))
 
 def uncertainty_rank_datapoints(data_loader: torch.utils.data.DataLoader, model: torch.nn.Module) -> torch.Tensor:
@@ -123,7 +123,7 @@ def run_single_experiment(methods_to_use: dict[callable], sampled_indexes: torch
         rankings["Covariance"] = reduced_unsample_indexes[most_decor_points]
         
     # Reset the model
-    model = Parallel_MLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers, num_parallel=config.model.num_parallel).to(device)
+    model = SimpleMLP(input_size=784, output_size=10, hidden_size=config.model.hidden_size, num_layers=config.model.num_layers).to(device)
     
     def run_sampling_experiment(data_rankings, n_samples, model, loss):
         data = indexed_data + torch.utils.data.Subset(train_data, data_rankings[:n_samples])
@@ -133,8 +133,8 @@ def run_single_experiment(methods_to_use: dict[callable], sampled_indexes: torch
         validation_res = []
         for epoch in range(config.training.num_epochs):
             for j in range(10):
-                train_epoch(model, current_optimizer, cross_entropy_parallel, train_data_loader, device)
-            validation_res.append(validate_parallel(model, cross_entropy_parallel, val_loader, device))
+                train_epoch(model, current_optimizer, loss, train_data_loader, device)
+            validation_res.append(validate(model, loss, val_loader, device))
         best_epoch = max(validation_res, key=lambda x: x[1])
         results_epoch.append(best_epoch)
         return list(zip(*results_epoch))
@@ -145,7 +145,7 @@ def run_single_experiment(methods_to_use: dict[callable], sampled_indexes: torch
     return results
 
 n_start_data = 100
-n_rep = 10
+n_rep = 100
 run_experiments = True
 
 methods_to_use = {"Random": uncertainty_rank_datapoints,
@@ -202,7 +202,7 @@ def generate_uncertainty_curve(ax, data_sample, label, color, significance_level
     ax.fill_between(n_samples, mean - lines, mean + lines, color=color, alpha=0.2)
 
 fig, axs = plt.subplots(2)
-colors = ["red", "green", "blue", "orange", "purple", "black", "yellow"]
+colors = ["black", "green", "blue", "orange", "purple", "black", "yellow"]
 for i, method in enumerate(methods_to_use.keys()):
     generate_uncertainty_curve(axs[0], sample_validation_losses[method], method, colors[i])
     generate_uncertainty_curve(axs[1], sample_validation_accuracy[method], method, colors[i])
@@ -225,10 +225,12 @@ plt.show()
 fig, axs = plt.subplots()
 for i, method in enumerate(methods_to_use.keys()):
     generate_uncertainty_curve(axs, sample_validation_accuracy[method] - sample_validation_accuracy['Random'], method, colors[i])
-axs.set_title('Final Accuracy')
-axs.set_xlabel('Number of Samples')
-axs.set_ylabel('Accuracy Difference from PL')
+axs.set_xlabel('Samples in batch')
+axs.set_ylabel('Accuracy Difference from random')
 axs.set_xscale('log')
 axs.legend()
+fig.tight_layout()
+# Make background transparent
+fig.patch.set_alpha(0)
 plt.savefig("figures/MNIST_sample_runs_difference.svg")
 plt.show()
